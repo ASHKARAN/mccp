@@ -320,9 +320,9 @@ impl StorageBackend {
     fn extract_imports(&self, code: &str) -> Vec<String> {
         let patterns = [
             r"use\s+([\w:]+)",
-            r"import\s+[\w\*]+\s+from\s+['\"]([^'\"]+)['\"]",
-            r"from\s+['\"]([^'\"]+)['\"]\s+import",
-            r"#include\s+[<\"]([^>\"]+)[>\"]",
+            r#"import\s+[\w\*]+\s+from\s+['"]([^'"]+)['"]"#,
+            r#"from\s+['"]([^'"]+)['"]\s+import"#,
+            r#"#include\s+[<"]([^>"]+)[>"]"#,
         ];
 
         let mut imports = Vec::new();

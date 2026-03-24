@@ -4,14 +4,8 @@ members = [
     "crates/mccp-cli",
     "crates/mccp-core",
     "crates/mccp-indexer",
-    "crates/mccp-query",
-    "crates/mccp-graph",
-    "crates/mccp-models",
-    "crates/mccp-docker",
-    "crates/mccp-logging",
+    "crates/mccp-storage",
     "crates/mccp-providers",
-    "crates/mccp-platform",
-    "crates/mccp-perf",
 ]
 
 [package]
@@ -35,7 +29,6 @@ async-trait = "0.1"
 dashmap = "5.5"
 rayon = "1.8"
 crossbeam = "0.8"
-dashmap = "5.5"
 smallvec = "1.11"
 
 # CLI and configuration
@@ -48,9 +41,10 @@ anyhow = "1.0"
 thiserror = "1.0"
 
 # File system and watching
-notify = { version = "6.0", features = ["fsevents", "inotify", "read_directory_changes"] }
+notify = { version = "6.0" }
 walkdir = "2.5"
 glob = "0.3"
+ignore = "0.4"
 
 # HTTP and networking
 reqwest = { version = "0.12", features = ["json"] }
@@ -65,15 +59,13 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 
 # Vector storage
 qdrant-client = { version = "0.1", optional = true }
-pgvector = { version = "0.6", optional = true }
+pgvector = { version = "0.4", optional = true }
 weaviate-client = { version = "0.1", optional = true }
-chroma-client = { version = "0.1", optional = true }
 
 # LLM and embedding providers
 ollama-rs = { version = "0.1", optional = true }
-openai = { version = "0.35", optional = true }
-anthropic = { version = "0.1", optional = true }
-groq = { version = "0.1", optional = true }
+openai = { version = "1.0", optional = true }
+anthropic = { version = "0.0.8", optional = true }
 
 # Code parsing
 tree-sitter = "0.21"
@@ -87,15 +79,16 @@ tree-sitter-cpp = "0.21"
 tree-sitter-c-sharp = "0.21"
 tree-sitter-ruby = "0.21"
 tree-sitter-php = "0.21"
-tree-sitter-kotlin = "0.21"
+tree-sitter-kotlin = "0.3"
 
 # Text processing and embeddings
-tokenizers = "0.16"
+tokenizers = "0.22"
 regex = "1.10"
 url = "2.5"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 base64 = "0.21"
 sha2 = "0.10"
+chrono = { version = "0.4", features = ["serde"] }
 
 # Logging and observability
 tracing = "0.1"
@@ -116,6 +109,9 @@ windows = { version = "0.58", optional = true }
 crossterm = "0.28"
 ratatui = "0.28"
 
+# Interactive prompts
+inquire = "0.7"
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.8"
@@ -132,10 +128,8 @@ qdrant = ["dep:qdrant-client"]
 ollama = ["dep:ollama-rs"]
 openai = ["dep:openai"]
 anthropic = ["dep:anthropic"]
-groq = ["dep:groq"]
 pgvector = ["dep:pgvector"]
 weaviate = ["dep:weaviate-client"]
-chroma = ["dep:chroma-client"]
 
 # Platform features
 windows-service = ["dep:windows"]

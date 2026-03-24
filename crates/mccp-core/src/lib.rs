@@ -16,6 +16,7 @@ pub use query::*;
 pub use config::*;
 pub use error::*;
 
+use sha2::Digest as _Digest;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -238,7 +239,7 @@ pub struct RankerConfig {
 }
 
 impl RankerConfig {
-    pub fn new(similarity: f32, graph: f32, metadata: f32) -> Result<Self, &'static str> {
+    pub fn new(similarity: f32, graph: f32, metadata: f32) -> std::result::Result<Self, &'static str> {
         let sum = similarity + graph + metadata;
         if (sum - 1.0).abs() > 0.01 {
             return Err("Weights must sum to approximately 1.0");

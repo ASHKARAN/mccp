@@ -148,7 +148,7 @@ impl GraphStore {
             }
 
             if let Some(edges) = self.edges.get(&current) {
-                for edge in edges {
+                for edge in edges.value() {
                     if config.edge_kinds.contains(&edge.kind) {
                         if visited.insert(edge.to.clone()) {
                             result.push(edge.to.clone());
@@ -166,7 +166,7 @@ impl GraphStore {
     pub fn entry_points(&self) -> Vec<String> {
         let all_nodes: std::collections::HashSet<_> = self.nodes.iter().map(|n| n.id.clone()).collect();
         let target_nodes: std::collections::HashSet<_> = self.edges.iter()
-            .flat_map(|edges| edges.iter().map(|e| e.to.clone()))
+            .flat_map(|entry| entry.value().iter().map(|e| e.to.clone()).collect::<Vec<_>>())
             .collect();
 
         all_nodes.difference(&target_nodes)
@@ -176,7 +176,7 @@ impl GraphStore {
 
     /// Get leaf nodes (nodes with no outgoing edges)
     pub fn leaf_nodes(&self) -> Vec<String> {
-        let source_nodes: std::collections::HashSet<_> = self.edges.iter().map(|e| e.from.clone()).collect();
+        let source_nodes: std::collections::HashSet<_> = self.edges.iter().map(|entry| entry.key().clone()).collect();
         let all_nodes: std::collections::HashSet<_> = self.nodes.iter().map(|n| n.id.clone()).collect();
 
         all_nodes.difference(&source_nodes)
@@ -188,7 +188,7 @@ impl GraphStore {
     pub fn bottlenecks(&self, limit: usize) -> Vec<String> {
         // Simple approximation: nodes with many outgoing edges
         let mut node_degrees: Vec<(String, usize)> = self.edges.iter()
-            .map(|(node_id, edges)| (node_id.clone(), edges.len()))
+            .map(|entry| (entry.key().clone(), entry.value().len()))
             .collect();
 
         node_degrees.sort_by(|a, b| b.1.cmp(&a.1));
@@ -335,9 +335,9 @@ impl GraphBuilder {
     fn extract_imports(code: &str) -> Option<Vec<String>> {
         let patterns = [
             r"use\s+([\w:]+)",
-            r"import\s+[\w\*]+\s+from\s+['\"]([^'\"]+)['\"]",
-            r"from\s+['\"]([^'\"]+)['\"]\s+import",
-            r"#include\s+[<\"]([^>\"]+)[>\"]",
+            r#"import\s+[\w\*]+\s+from\s+['"]([^'"]+)['"]"#,
+            r#"from\s+['"]([^'"]+)['"]\s+import"#,
+            r#"#include\s+[<"]([^>"]+)[>"]"#,
         ];
 
         let mut imports = Vec::new();

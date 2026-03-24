@@ -21,4 +21,4 @@ glob = "0.3"
 regex = "1.10"
 sha2 = "0.10"
 uuid = { version = "1.0", features = ["v4", "serde"] }
-notify = { version = "6.0", features = ["fsevents", "inotify", "read_directory_changes"] }
+notify = { version = "6.0" }

@@ -55,6 +55,7 @@ pub struct SymbolExtractor;
 impl SymbolExtractor {
     /// Extract symbols from a source file
     pub fn extract_symbols(file: &SourceFile) -> Vec<Symbol> {
+        //todo how to we know file.language? We can use file extension or content-based detection
         match file.language {
             Language::Rust => Self::extract_rust_symbols(file),
             Language::TypeScript | Language::JavaScript => Self::extract_ts_js_symbols(file),

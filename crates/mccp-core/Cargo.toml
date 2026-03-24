@@ -17,10 +17,17 @@ thiserror = "1.0"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+toml = "0.8"
 
 # File system
-path = "0.1"
 walkdir = "2.5"
+notify = { version = "6.0" }
+
+# Config & paths
+dirs = "5.0"
+
+# HTTP
+reqwest = { version = "0.12", features = ["json"] }
 
 # Text processing
 regex = "1.10"

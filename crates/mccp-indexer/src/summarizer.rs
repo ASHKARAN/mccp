@@ -131,6 +131,27 @@ pub trait LlmProvider: Send + Sync {
     
     /// Get provider health status
     async fn health(&self) -> ProviderHealth;
+    
+    /// Get provider ID
+    fn id(&self) -> String;
+    
+    /// Get provider name
+    fn name(&self) -> String;
+    
+    /// Get provider version
+    fn version(&self) -> String;
+    
+    /// Get supported models
+    fn models(&self) -> Vec<String>;
+    
+    /// Get current model
+    fn current_model(&self) -> String;
+    
+    /// Set model
+    fn set_model(&mut self, model: String) -> Result<()>;
+    
+    /// Download model (for local providers)
+    async fn download_model(&self, model: &str) -> Result<()>;
 }
 
 /// JSON schema for structured responses

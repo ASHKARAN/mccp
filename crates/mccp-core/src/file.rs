@@ -1,4 +1,5 @@
 use super::*;
+use sha2::Digest as _Digest;
 use std::path::PathBuf;
 use std::fs;
 
@@ -18,7 +19,7 @@ impl SourceFile {
     pub fn from_path<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
         let content = fs::read_to_string(path)
-            .map_err(|e| Error::FileReadError(path.to_string_lossy().to_string(), e.to_string()))?;
+            .map_err(|e| Error::FileReadError { path: path.to_string_lossy().to_string(), error: e.to_string() })?;
         
         let language = Language::from_extension(
             path.extension()
@@ -162,9 +163,9 @@ impl SecretsScrubber {
     pub fn scrub(content: &str) -> String {
         let patterns = [
             // API keys
-            (r"API[_-]?KEY[_-]?=.*?['\"]([A-Za-z0-9]{20,})['\"]", "[REDACTED_API_KEY]"),
-            (r"SECRET[_-]?=.*?['\"]([A-Za-z0-9]{20,})['\"]", "[REDACTED_SECRET]"),
-            (r"TOKEN[_-]?=.*?['\"]([A-Za-z0-9]{20,})['\"]", "[REDACTED_TOKEN]"),
+            (r#"API[_-]?KEY[_-]?=.*?['"]([A-Za-z0-9]{20,})['"]"#, "[REDACTED_API_KEY]"),
+            (r#"SECRET[_-]?=.*?['"]([A-Za-z0-9]{20,})['"]"#, "[REDACTED_SECRET]"),
+            (r#"TOKEN[_-]?=.*?['"]([A-Za-z0-9]{20,})['"]"#, "[REDACTED_TOKEN]"),
             
             // AWS keys
             (r"AKIA[0-9A-Z]{16}", "[REDACTED_AWS_KEY]"),
@@ -177,9 +178,9 @@ impl SecretsScrubber {
             (r"ghr_[A-Za-z0-9]{36}", "[REDACTED_GITHUB_TOKEN]"),
             
             // Database URLs
-            (r"postgres://[^\\s]+", "[REDACTED_DB_URL]"),
-            (r"mysql://[^\\s]+", "[REDACTED_DB_URL]"),
-            (r"mongodb://[^\\s]+", "[REDACTED_DB_URL]"),
+            (r"postgres://\S+", "[REDACTED_DB_URL]"),
+            (r"mysql://\S+", "[REDACTED_DB_URL]"),
+            (r"mongodb://\S+", "[REDACTED_DB_URL]"),
             
             // JWT tokens
             (r"[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}", "[REDACTED_JWT]"),
