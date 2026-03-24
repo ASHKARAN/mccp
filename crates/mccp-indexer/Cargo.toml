@@ -1,0 +1,24 @@
+[package]
+name = "mccp-indexer"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "Indexing pipeline for mccp"
+
+[dependencies]
+mccp-core = { path = "../mccp-core" }
+tokio = { version = "1.0", features = ["full"] }
+async-trait = "0.1"
+dashmap = "5.5"
+rayon = "1.8"
+crossbeam = "0.8"
+anyhow = "1.0"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+walkdir = "2.5"
+glob = "0.3"
+regex = "1.10"
+sha2 = "0.10"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+notify = { version = "6.0", features = ["fsevents", "inotify", "read_directory_changes"] }
