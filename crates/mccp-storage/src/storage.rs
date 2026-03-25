@@ -5,6 +5,22 @@ use dashmap::DashMap;
 use tokio::sync::RwLock;
 use std::time::{Duration, Instant};
 
+/// A record of a recent query (used for V3-8 cache warming)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct QueryRecord {
+    pub project: String,
+    pub query: String,
+    pub timestamp: u64,
+}
+
+/// Load the most recent queries for cache warming (V3-8).
+/// Returns an empty list if no history is persisted yet.
+pub async fn load_recent_queries(project: &str, limit: usize) -> anyhow::Result<Vec<QueryRecord>> {
+    // Stub: a real impl would read from SQLite/sled; return empty for now
+    let _ = (project, limit);
+    Ok(vec![])
+}
+
 /// Storage backend for managing all data
 #[derive(Debug, Clone)]
 pub struct StorageBackend {

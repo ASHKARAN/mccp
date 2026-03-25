@@ -745,9 +745,11 @@ impl SymbolStore {
 
     /// Find symbols by file pattern
     pub fn find_symbols_by_pattern(&self, pattern: &str) -> Vec<Symbol> {
+        let glob = match glob::Pattern::new(pattern) {
+            Ok(g) => g,
+            Err(_) => return vec![],
+        };
         let mut results = Vec::new();
-        let glob = glob::Pattern::new(pattern).ok()?;
-        
         for entry in self.symbols.iter() {
             if glob.matches(entry.key()) {
                 for symbol in entry.value() {

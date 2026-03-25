@@ -47,7 +47,7 @@ pub struct AppState {
 impl AppState {
     /// Initialize application state
     pub async fn init(config: Config) -> Result<Self> {
-        let query_engine = QueryEngine::new(config.ranker_weights.clone());
+        let query_engine = QueryEngine::new(config.ranker_weights().clone());
         let pipeline = Arc::new(mccp_indexer::IndexingPipeline::new(
             Project::new("default".to_string(), &std::path::PathBuf::from(".")),
             config.indexer.clone(),
@@ -377,8 +377,13 @@ pub async fn auth_middleware(
         .map(String::from);
 
     match token.as_deref().and_then(|t| state.config.find_agent(t)) {
-        Some(agent) => {
-            req.extensions_mut().insert(agent);
+        Some(agent_cfg) => {
+            let ctx = AgentContext {
+                name: agent_cfg.name.clone(),
+                projects: agent_cfg.projects.clone(),
+                can_write: agent_cfg.can_write,
+            };
+            req.extensions_mut().insert(ctx);
             next.run(req).await
         }
         None => (StatusCode::UNAUTHORIZED, "invalid agent token").into_response(),

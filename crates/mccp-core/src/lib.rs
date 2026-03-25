@@ -16,6 +16,8 @@ pub use query::*;
 pub use config::*;
 pub use error::*;
 
+pub use serde::{Serialize, Deserialize};
+
 use sha2::Digest as _Digest;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -170,29 +172,45 @@ impl ChunkScope {
     }
 }
 
+/// Provider status type
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ProviderStatusType {
+    Healthy,
+    Degraded,
+    Unhealthy,
+}
+
 /// Provider health status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderHealth {
-    pub is_healthy: bool,
-    pub error: String,
-    pub latency_ms: Option<u64>,
+    pub status: ProviderStatusType,
+    pub last_check: chrono::DateTime<chrono::Utc>,
+    pub error_message: Option<String>,
+}
+
+impl Default for ProviderHealth {
+    fn default() -> Self {
+        Self {
+            status: ProviderStatusType::Healthy,
+            last_check: chrono::Utc::now(),
+            error_message: None,
+        }
+    }
 }
 
 impl ProviderHealth {
-    pub fn healthy() -> Self {
-        Self {
-            is_healthy: true,
-            error: String::new(),
-            latency_ms: None,
-        }
-    }
+    pub fn healthy() -> Self { Self::default() }
 
     pub fn unhealthy(error: impl Into<String>) -> Self {
         Self {
-            is_healthy: false,
-            error: error.into(),
-            latency_ms: None,
+            status: ProviderStatusType::Unhealthy,
+            last_check: chrono::Utc::now(),
+            error_message: Some(error.into()),
         }
+    }
+
+    pub fn is_healthy(&self) -> bool {
+        self.status == ProviderStatusType::Healthy
     }
 }
 
@@ -289,6 +307,59 @@ impl QueryCacheKey {
     }
 }
 
+/// A chunk with dense embedding (input to vector store upsert)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddedChunk {
+    pub chunk_id: String,
+    pub project_id: String,
+    pub embedding: Vec<f32>,
+    pub content: String,
+    pub metadata: serde_json::Value,
+}
+
+/// A chunk with both dense and sparse embeddings (for hybrid upsert)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SparseEmbeddedChunk {
+    pub chunk_id: String,
+    pub project_id: String,
+    pub dense: Vec<f32>,
+    pub sparse_indices: Vec<u32>,
+    pub sparse_values: Vec<f32>,
+    pub content: String,
+    pub metadata: serde_json::Value,
+}
+
+/// A scored chunk returned from vector search
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScoredChunk {
+    pub chunk_id: String,
+    pub project_id: String,
+    pub score: f32,
+    pub content: String,
+    pub file_path: String,
+    pub start_line: usize,
+    pub end_line: usize,
+    pub metadata: serde_json::Value,
+}
+
+/// Metadata filters for vector search
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Filters {
+    pub file_patterns: Vec<String>,
+    pub languages: Vec<String>,
+    pub tags: Vec<String>,
+}
+
+impl Filters {
+    pub fn new() -> Self { Self::default() }
+    pub fn is_empty(&self) -> bool {
+        self.file_patterns.is_empty() && self.languages.is_empty() && self.tags.is_empty()
+    }
+}
+
+/// JSON schema type for structured LLM output
+pub type JsonSchema = serde_json::Value;
+
 /// Embedding provider trait
 #[async_trait::async_trait]
 pub trait EmbeddingProvider: Send + Sync {
@@ -326,7 +397,8 @@ pub trait VectorStoreProvider: Send + Sync {
     async fn upsert_with_sparse(
         &self, project_id: &str, chunks: &[SparseEmbeddedChunk]
     ) -> Result<()> {
-        Err(anyhow::anyhow!("provider does not support sparse vectors"))
+        let _ = (project_id, chunks);
+        Err(Error::NotImplemented("provider does not support sparse vectors".into()))
     }
     async fn hybrid_search(
         &self,

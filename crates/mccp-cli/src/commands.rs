@@ -222,6 +222,9 @@ pub struct IndexCommand {
     
     /// Verbose output
     pub verbose: bool,
+
+    /// Show index status without running a full re-index (V3-9)
+    pub status_only: bool,
 }
 
 impl IndexCommand {
@@ -230,6 +233,17 @@ impl IndexCommand {
             path,
             force,
             verbose,
+            status_only: false,
+        }
+    }
+
+    /// Create a status-only query (V3-9)
+    pub fn new_status(path: PathBuf) -> Self {
+        Self {
+            path,
+            force: false,
+            verbose: false,
+            status_only: true,
         }
     }
 }
@@ -237,8 +251,6 @@ impl IndexCommand {
 #[async_trait::async_trait]
 impl Command for IndexCommand {
     async fn execute(&self, config: &CliConfig) -> anyhow::Result<()> {
-        info!("Indexing project: {}", self.path.display());
-        
         // Load project configuration
         let config_path = self.path.join(".mccp.toml");
         let project_config = if config_path.exists() {
@@ -246,6 +258,50 @@ impl Command for IndexCommand {
         } else {
             ProjectConfig::default()
         };
+
+        // V3-9: --status flag — query daemon over HTTP without indexing
+        if self.status_only {
+            let port = config.server.port;
+            let url = format!("http://127.0.0.1:{}/index/status", port);
+            let client = reqwest::Client::new();
+            match client.get(&url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                    println!("{}", "Index Status".green().bold());
+                    println!("Project ID:    {}", body["project_id"].as_str().unwrap_or("—").bold());
+                    println!("Files:         {}", body["file_count"].as_u64().unwrap_or(0).to_string().bold());
+                    println!("Indexed:       {}", body["indexed_files"].as_u64().unwrap_or(0).to_string().bold());
+                    println!("Queue depth:   {}", body["queue_depth"].as_u64().unwrap_or(0).to_string().bold());
+                    println!("Watching:      {}", if body["is_watching"].as_bool().unwrap_or(false) { "Yes" } else { "No" }.bold());
+                }
+                Ok(resp) => {
+                    eprintln!("Daemon returned error: HTTP {}", resp.status());
+                }
+                Err(_) => {
+                    // Fall back to local status if daemon not running
+                    let project = Project::new(project_config.project_id, &self.path);
+                    let indexer_config = IndexerConfig {
+                        max_chunk_tokens: project_config.chunk_size,
+                        chunk_overlap: project_config.chunk_overlap,
+                        watch_enabled: false,
+                        parallel_workers: config.indexer.parallel_workers,
+                        include_patterns: project_config.include_patterns,
+                        exclude_patterns: project_config.exclude_patterns,
+                    };
+                    let indexer = IndexingPipeline::new(project, indexer_config);
+                    let status = indexer.status();
+                    println!("{}", "Index Status (local)".yellow().bold());
+                    println!("Project ID:    {}", status.project_id.bold());
+                    println!("Files:         {}", status.file_count.to_string().bold());
+                    println!("Indexed:       {}", status.indexed_files.to_string().bold());
+                    println!("Queue depth:   {}", status.queue_depth.to_string().bold());
+                    println!("Watching:      {}", if status.is_watching { "Yes" } else { "No" }.bold());
+                }
+            }
+            return Ok(());
+        }
+
+        info!("Indexing project: {}", self.path.display());
         
         // Create project
         let project = Project::new(project_config.project_id, &self.path);

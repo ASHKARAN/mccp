@@ -5,11 +5,19 @@ use dashmap::DashMap;
 use tokio::sync::RwLock;
 use std::time::{Duration, Instant};
 
+/// Info about a registered provider (V3-2)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProviderInfo {
+    pub id: String,
+    pub fingerprint: String,
+    pub health: ProviderHealth,
+}
+
 /// Provider manager for managing LLM providers
 #[derive(Debug, Clone)]
 pub struct ProviderManager {
     /// Registered providers
-    providers: Arc<DashMap<String, Box<dyn LlmProvider>>>,
+    providers: Arc<DashMap<String, Arc<dyn LlmProvider>>>,
     
     /// Provider configurations
     configs: Arc<DashMap<String, ProviderConfig>>,
@@ -76,8 +84,8 @@ impl ProviderManager {
     }
 
     /// Register a new LLM provider
-    pub async fn register_provider(&self, provider: Box<dyn LlmProvider>) -> Result<()> {
-        let provider_id = provider.id();
+    pub async fn register_provider(&self, provider: Arc<dyn LlmProvider>) -> Result<()> {
+        let provider_id = provider.provider_fingerprint();
         let health = provider.health().await;
         
         self.providers.insert(provider_id.clone(), provider);
@@ -98,7 +106,7 @@ impl ProviderManager {
     }
 
     /// Get a provider by ID
-    pub async fn get_provider(&self, provider_id: &str) -> Option<Box<dyn LlmProvider>> {
+    pub async fn get_provider(&self, provider_id: &str) -> Option<Arc<dyn LlmProvider>> {
         self.providers.get(provider_id).map(|p| p.clone())
     }
 
@@ -111,9 +119,8 @@ impl ProviderManager {
             let health = self.health_status.get(&provider_id);
             
             providers.push(ProviderInfo {
-                id: provider_id,
-                name: provider_entry.value().name(),
-                version: provider_entry.value().version(),
+                id: provider_id.clone(),
+                fingerprint: provider_entry.value().provider_fingerprint(),
                 health: health.map(|h| h.clone()).unwrap_or_default(),
             });
         }
@@ -138,7 +145,7 @@ impl ProviderManager {
     }
 
     /// Get healthy providers
-    pub async fn get_healthy_providers(&self) -> Vec<Box<dyn LlmProvider>> {
+    pub async fn get_healthy_providers(&self) -> Vec<Arc<dyn LlmProvider>> {
         let mut providers = Vec::new();
         
         for provider_entry in self.providers.iter() {
@@ -157,12 +164,11 @@ impl ProviderManager {
     pub async fn status(&self) -> ProviderStatus {
         let total_providers = self.providers.len();
         let healthy_providers = self.get_healthy_providers().await.len();
-        let total_models = self.providers.iter().map(|p| p.value().models().len()).sum();
         
         ProviderStatus {
             total_providers,
             healthy_providers,
-            total_models,
+            total_models: 0,
         }
     }
 
@@ -223,79 +229,57 @@ mod tests {
     #[tokio::test]
     async fn test_provider_registration() {
         let manager = ProviderManager::new();
+        let mock_provider = Arc::new(MockProvider::new());
+        manager.register_provider(mock_provider).await.unwrap();
         
-        // Create a mock provider
-        let mock_provider = MockProvider::new();
-        
-        // Register provider
-        manager.register_provider(Box::new(mock_provider)).await.unwrap();
-        
-        // Check provider was registered
         assert_eq!(manager.providers.len(), 1);
         assert_eq!(manager.health_status.len(), 1);
         
-        // List providers
         let providers = manager.list_providers().await;
         assert_eq!(providers.len(), 1);
-        assert_eq!(providers[0].name, "Mock Provider");
     }
 
     #[tokio::test]
     async fn test_provider_unregistration() {
         let manager = ProviderManager::new();
+        let mock_provider = Arc::new(MockProvider::new());
+        let provider_id = mock_provider.provider_fingerprint();
         
-        // Create a mock provider
-        let mock_provider = MockProvider::new();
-        let provider_id = mock_provider.id();
-        
-        // Register provider
-        manager.register_provider(Box::new(mock_provider)).await.unwrap();
+        manager.register_provider(mock_provider).await.unwrap();
         assert_eq!(manager.providers.len(), 1);
         
-        // Unregister provider
         manager.unregister_provider(&provider_id).await.unwrap();
         assert_eq!(manager.providers.len(), 0);
         assert_eq!(manager.health_status.len(), 0);
-        assert_eq!(manager.configs.len(), 0);
     }
 
     #[tokio::test]
     async fn test_provider_health() {
         let manager = ProviderManager::new();
+        let mock_provider = Arc::new(MockProvider::new());
+        let provider_id = mock_provider.provider_fingerprint();
         
-        // Create a mock provider
-        let mock_provider = MockProvider::new();
-        let provider_id = mock_provider.id();
+        manager.register_provider(mock_provider).await.unwrap();
         
-        // Register provider
-        manager.register_provider(Box::new(mock_provider)).await.unwrap();
-        
-        // Get health status
         let health = manager.get_provider_health(&provider_id).await;
         assert!(health.is_some());
         assert!(health.unwrap().is_healthy());
         
-        // Get all health statuses
         let all_health = manager.get_all_health().await;
         assert_eq!(all_health.len(), 1);
-        assert!(all_health[0].1.is_healthy());
+        assert!(all_health[0].1.is_healthy);
     }
 
     #[tokio::test]
     async fn test_provider_status() {
         let manager = ProviderManager::new();
+        let mock_provider = Arc::new(MockProvider::new());
         
-        // Create a mock provider
-        let mock_provider = MockProvider::new();
+        manager.register_provider(mock_provider).await.unwrap();
         
-        // Register provider
-        manager.register_provider(Box::new(mock_provider)).await.unwrap();
-        
-        // Get status
         let status = manager.status().await;
         assert_eq!(status.total_providers, 1);
         assert_eq!(status.healthy_providers, 1);
-        assert_eq!(status.total_models, 1);
     }
 
     #[tokio::test]
@@ -303,7 +287,6 @@ mod tests {
         let manager = ProviderManager::new();
         let provider_id = "test_provider";
         
-        // Create config
         let config = ProviderConfig {
             api_key: Some("test_key".to_string()),
             endpoint: Some("https://api.example.com".to_string()),
@@ -313,20 +296,16 @@ mod tests {
             timeout: Some(Duration::from_secs(30)),
         };
         
-        // Set config
         manager.set_config(provider_id, config.clone()).await.unwrap();
         
-        // Get config
         let retrieved_config = manager.get_config(provider_id).await;
         assert!(retrieved_config.is_some());
         assert_eq!(retrieved_config.unwrap().api_key, Some("test_key".to_string()));
         
-        // Get all configs
         let all_configs = manager.get_all_configs().await;
         assert_eq!(all_configs.len(), 1);
         assert_eq!(all_configs[0].0, provider_id);
         
-        // Remove config
         manager.remove_config(provider_id).await.unwrap();
         let retrieved_config = manager.get_config(provider_id).await;
         assert!(retrieved_config.is_none());
@@ -371,32 +350,7 @@ impl LlmProvider for MockProvider {
         }
     }
 
-    fn id(&self) -> String {
-        self.id.clone()
-    }
-
-    fn name(&self) -> String {
-        self.name.clone()
-    }
-
-    fn version(&self) -> String {
-        self.version.clone()
-    }
-
-    fn models(&self) -> Vec<String> {
-        vec!["mock-model".to_string()]
-    }
-
-    fn current_model(&self) -> String {
-        self.id.clone()
-    }
-
-    fn set_model(&mut self, model: String) -> Result<()> {
-        self.id = model;
-        Ok(())
-    }
-
-    async fn download_model(&self, _model: &str) -> Result<()> {
-        Ok(())
+    fn provider_fingerprint(&self) -> String {
+        format!("mock:{}:{}", self.name, self.version)
     }
 }

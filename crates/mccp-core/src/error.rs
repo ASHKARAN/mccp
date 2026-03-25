@@ -110,6 +110,7 @@ impl Error {
             Error::NetworkError(_) => true,
             Error::TimeoutError(_) => true,
             Error::NotImplemented(_) => true,
+            Error::ProjectAlreadyExists(_) => false,
         }
     }
 

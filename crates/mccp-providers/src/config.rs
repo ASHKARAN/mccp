@@ -1,6 +1,10 @@
 use super::*;
+use mccp_core::*;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use std::sync::Arc;
+use std::collections::HashMap;
+use tokio::sync::RwLock;
 
 /// Provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -220,7 +224,7 @@ impl ProviderConfigManager {
             })?;
 
         let configs: HashMap<String, ProviderConfig> = serde_json::from_str(&content)
-            .map_err(|e| Error::DeserializationError(e.to_string()))?;
+            .map_err(|e| Error::ParseError(e.to_string()))?;
 
         let mut config_map = self.configs.write().await;
         *config_map = configs;
@@ -236,14 +240,11 @@ impl ProviderConfigManager {
         };
 
         let content = serde_json::to_string_pretty(&configs)
-            .map_err(|e| Error::SerializationError(e.to_string()))?;
+            .map_err(|e| Error::ParseError(e.to_string()))?;
 
         tokio::fs::write(path, content)
             .await
-            .map_err(|e| Error::FileWriteError {
-                path: path.to_string(),
-                error: e.to_string(),
-            })?;
+            .map_err(|e| Error::IoError(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
 
         Ok(())
     }

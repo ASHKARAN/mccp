@@ -62,7 +62,7 @@ impl GraphEdge {
 }
 
 /// Graph store for managing call graphs
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GraphStore {
     nodes: dashmap::DashMap<String, GraphNode>,
     edges: dashmap::DashMap<String, Vec<GraphEdge>>,
@@ -207,7 +207,7 @@ impl GraphStore {
 }
 
 /// Multi-project graph store
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MultiProjectGraphStore {
     stores: dashmap::DashMap<String, GraphStore>,
 }
@@ -224,6 +224,7 @@ impl MultiProjectGraphStore {
     pub fn get_or_create(&self, project_id: &str) -> GraphStore {
         self.stores.entry(project_id.to_string())
             .or_insert_with(GraphStore::new)
+            .value()
             .clone()
     }
 

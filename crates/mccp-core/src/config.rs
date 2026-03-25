@@ -2,6 +2,23 @@ use super::*;
 use std::path::PathBuf;
 use std::collections::HashMap;
 
+/// Per-agent access control configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentConfig {
+    pub name: String,
+    pub token: String,
+    /// Project allowlist; `["*"]` means all projects
+    pub projects: Vec<String>,
+    pub can_write: bool,
+}
+
+/// Webhook configuration (V3-6)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebhookConfig {
+    /// HMAC-SHA256 secret for validating push events
+    pub secret: Option<String>,
+}
+
 /// Configuration for the mccp system
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -14,9 +31,25 @@ pub struct Config {
     pub storage: StorageConfig,
     pub docker: DockerConfig,
     pub logging: LoggingConfig,
+    /// Per-agent access tokens (V3-7). Empty = single-user mode (no auth).
+    #[serde(default)]
+    pub agents: Vec<AgentConfig>,
+    /// Webhook configuration (V3-6)
+    #[serde(default)]
+    pub webhook: Option<WebhookConfig>,
 }
 
 impl Config {
+    /// Shortcut to ranker weights (also accessible via `config.query.ranker_weights`)
+    pub fn ranker_weights(&self) -> &RankerConfig {
+        &self.query.ranker_weights
+    }
+
+    /// Find an agent by bearer token
+    pub fn find_agent(&self, token: &str) -> Option<&AgentConfig> {
+        self.agents.iter().find(|a| a.token == token)
+    }
+
     /// Create default configuration
     pub fn default() -> Self {
         Self {
@@ -29,6 +62,8 @@ impl Config {
             storage: StorageConfig::default(),
             docker: DockerConfig::default(),
             logging: LoggingConfig::default(),
+            agents: vec![],
+            webhook: None,
         }
     }
 

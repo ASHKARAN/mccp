@@ -88,10 +88,11 @@ impl LlmProvider for OpenAiProvider {
                 r#type: "json_schema".to_string(),
                 json_schema: OpenAiJsonSchema {
                     name: "response_schema".to_string(),
-                    schema: s.schema.clone(),
+                    schema: s.clone(),
                     strict: true,
                 },
             }),
+            stream: None,
         };
 
         let response = self.client
@@ -191,38 +192,8 @@ impl LlmProvider for OpenAiProvider {
         }
     }
 
-    fn id(&self) -> String {
-        format!("openai-{}", self.model)
-    }
-
-    fn name(&self) -> String {
-        "OpenAI".to_string()
-    }
-
-    fn version(&self) -> String {
-        "1.0.0".to_string()
-    }
-
-    fn models(&self) -> Vec<String> {
-        vec![
-            "gpt-4".to_string(),
-            "gpt-4-turbo".to_string(),
-            "gpt-3.5-turbo".to_string(),
-        ]
-    }
-
-    fn current_model(&self) -> String {
-        self.model.clone()
-    }
-
-    fn set_model(&mut self, model: String) -> Result<()> {
-        self.model = model;
-        Ok(())
-    }
-
-    async fn download_model(&self, _model: &str) -> Result<()> {
-        // OpenAI models are not downloaded locally
-        Err(Error::ProviderError("OpenAI models cannot be downloaded locally".to_string()))
+    fn provider_fingerprint(&self) -> String {
+        format!("openai:{}", self.model)
     }
 }
 
@@ -359,38 +330,8 @@ impl LlmProvider for AnthropicProvider {
         }
     }
 
-    fn id(&self) -> String {
-        format!("anthropic-{}", self.model)
-    }
-
-    fn name(&self) -> String {
-        "Anthropic".to_string()
-    }
-
-    fn version(&self) -> String {
-        "1.0.0".to_string()
-    }
-
-    fn models(&self) -> Vec<String> {
-        vec![
-            "claude-3-opus-20240229".to_string(),
-            "claude-3-sonnet-20240229".to_string(),
-            "claude-3-haiku-20240307".to_string(),
-        ]
-    }
-
-    fn current_model(&self) -> String {
-        self.model.clone()
-    }
-
-    fn set_model(&mut self, model: String) -> Result<()> {
-        self.model = model;
-        Ok(())
-    }
-
-    async fn download_model(&self, _model: &str) -> Result<()> {
-        // Anthropic models are not downloaded locally
-        Err(Error::ProviderError("Anthropic models cannot be downloaded locally".to_string()))
+    fn provider_fingerprint(&self) -> String {
+        format!("anthropic:{}", self.model)
     }
 }
 
@@ -449,38 +390,8 @@ impl LlmProvider for LocalProvider {
         }
     }
 
-    fn id(&self) -> String {
-        format!("local-{}", self.model)
-    }
-
-    fn name(&self) -> String {
-        "Local".to_string()
-    }
-
-    fn version(&self) -> String {
-        "1.0.0".to_string()
-    }
-
-    fn models(&self) -> Vec<String> {
-        vec![
-            "mock-model".to_string(),
-            "test-model".to_string(),
-        ]
-    }
-
-    fn current_model(&self) -> String {
-        self.model.clone()
-    }
-
-    fn set_model(&mut self, model: String) -> Result<()> {
-        self.model = model;
-        Ok(())
-    }
-
-    async fn download_model(&self, model: &str) -> Result<()> {
-        // For local provider, we can simulate downloading a model
-        println!("Downloading model: {}", model);
-        Ok(())
+    fn provider_fingerprint(&self) -> String {
+        format!("local:{}", self.model)
     }
 }
 

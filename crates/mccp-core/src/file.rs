@@ -2,6 +2,7 @@ use super::*;
 use sha2::Digest as _Digest;
 use std::path::PathBuf;
 use std::fs;
+use notify::Watcher as _NotifyWatcher;
 
 /// File metadata and content
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,9 +96,10 @@ impl FileWatcher {
         path: P,
         debounce_ms: u64,
     ) -> Result<Self> {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<FileChangeEvent>();
+        let _ = debounce_ms; // debounce not used in this basic watcher
         
-        let mut watcher = notify::recommended_watcher(move |res| {
+        let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
             match res {
                 Ok(event) => {
                     let change = match event.kind {
@@ -130,9 +132,10 @@ impl FileWatcher {
                     eprintln!("Watch error: {:?}", e);
                 }
             }
-        })?;
+        }).map_err(|e| Error::IoError(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
         
-        watcher.watch(path.as_ref(), notify::RecursiveMode::Recursive)?;
+        watcher.watch(path.as_ref(), notify::RecursiveMode::Recursive)
+            .map_err(|e| Error::IoError(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
         
         Ok(Self {
             _watcher: watcher,

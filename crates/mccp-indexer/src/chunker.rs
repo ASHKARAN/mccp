@@ -302,9 +302,8 @@ impl Chunker {
             ));
         }
         out
-}
-
-/// Chunking statistics
+    }
+} // end impl Chunker
 #[derive(Debug, Clone)]
 pub struct ChunkStats {
     pub total_chunks: usize,

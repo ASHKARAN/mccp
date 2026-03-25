@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use mccp_core::ScoredChunk;
 
 /// BM25 encoder for sparse vector generation
 #[derive(Debug, Clone)]
@@ -186,6 +187,7 @@ mod tests {
                 start_line: 1,
                 end_line: 5,
                 project_id: "proj1".to_string(),
+                metadata: serde_json::Value::Null,
             },
             ScoredChunk {
                 chunk_id: "chunk2".to_string(),
@@ -195,6 +197,7 @@ mod tests {
                 start_line: 1,
                 end_line: 5,
                 project_id: "proj1".to_string(),
+                metadata: serde_json::Value::Null,
             },
         ];
 
@@ -207,6 +210,7 @@ mod tests {
                 start_line: 1,
                 end_line: 5,
                 project_id: "proj1".to_string(),
+                metadata: serde_json::Value::Null,
             },
             ScoredChunk {
                 chunk_id: "chunk3".to_string(),
@@ -216,6 +220,7 @@ mod tests {
                 start_line: 1,
                 end_line: 5,
                 project_id: "proj1".to_string(),
+                metadata: serde_json::Value::Null,
             },
         ];
 

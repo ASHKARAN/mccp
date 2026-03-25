@@ -160,27 +160,26 @@ impl Chunker {
 
     /// Apply overlap between adjacent chunks
     fn apply_overlap(&self, chunks: &mut Vec<Chunk>) {
+        let overlap_needed = self.config.overlap_tokens;
+        if overlap_needed == 0 {
+            return;
+        }
         for i in 1..chunks.len() {
-            let prev = &chunks[i - 1];
+            // Compute overlap from previous chunk content without a borrow on `chunks`
+            let overlap_content = {
+                let prev = &chunks[i - 1];
+                prev.content
+                    .split_whitespace()
+                    .rev()
+                    .take(overlap_needed)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+
             let curr = &mut chunks[i];
-            
-            // Calculate overlap needed
-            let overlap_needed = self.config.overlap_tokens;
-            if overlap_needed == 0 {
-                continue;
-            }
-            
-            // Simple overlap by extending content backwards
-            let overlap_content = prev.content
-                .split_whitespace()
-                .rev()
-                .take(overlap_needed)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>()
-                .join(" ");
-            
             curr.content = format!("{} {}", overlap_content, curr.content);
             curr.start_byte = curr.start_byte.saturating_sub(overlap_content.len());
         }

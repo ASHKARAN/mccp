@@ -39,19 +39,28 @@ impl QdrantProvider {
         
         let request = CreateCollectionRequest {
             collection_name: collection_name.clone(),
-            vectors_config: Some(VectorsConfig::ParamsMap(HashMap::from([
-                ("dense".to_owned(), VectorParams { 
-                    size: dims as u64, 
-                    distance: Distance::Cosine, 
-                    ..Default::default() 
-                }),
-            ]))),
+            vectors_config: Some(VectorsConfig {
+                params: HashMap::from([
+                    ("dense".to_owned(), VectorParams { 
+                        size: dims as u64, 
+                        distance: Distance::Cosine, 
+                        on_disk: None,
+                        hnsw_config: None,
+                        quantization_config: None,
+                    }),
+                ]),
+            }),
             sparse_vectors_config: Some(SparseVectorsConfig {
                 map: HashMap::from([
-                    ("sparse".to_owned(), SparseVectorParams::default()),
+                    ("sparse".to_owned(), SparseVectorParams { index: None }),
                 ])
             }),
-            ..Default::default()
+            hnsw_config: None,
+            optimizers_config: None,
+            wal_config: None,
+            quantization_config: None,
+            init_from: None,
+            tokenizer_config: None,
         };
 
         let url = format!("{}/collections/{}", self.endpoint, collection_name);
@@ -119,11 +128,12 @@ impl QdrantProvider {
         Ok(search_response.result.into_iter().map(|r| ScoredChunk {
             chunk_id: r.id.to_string(),
             score: r.score,
-            content: r.payload.and_then(|p| p.get("content").and_then(|c| c.as_str())).unwrap_or_default().to_string(),
-            file_path: r.payload.and_then(|p| p.get("file_path").and_then(|c| c.as_str())).unwrap_or_default().to_string(),
-            start_line: r.payload.and_then(|p| p.get("start_line").and_then(|c| c.as_u64())).unwrap_or_default() as usize,
-            end_line: r.payload.and_then(|p| p.get("end_line").and_then(|c| c.as_u64())).unwrap_or_default() as usize,
+            content: r.payload.as_ref().and_then(|p| p.get("content").and_then(|c| c.as_str())).unwrap_or_default().to_string(),
+            file_path: r.payload.as_ref().and_then(|p| p.get("file_path").and_then(|c| c.as_str())).unwrap_or_default().to_string(),
+            start_line: r.payload.as_ref().and_then(|p| p.get("start_line").and_then(|c| c.as_u64())).unwrap_or_default() as usize,
+            end_line: r.payload.as_ref().and_then(|p| p.get("end_line").and_then(|c| c.as_u64())).unwrap_or_default() as usize,
             project_id: project_id.to_string(),
+            metadata: r.payload.map(|p| serde_json::to_value(p).unwrap_or(serde_json::Value::Null)).unwrap_or(serde_json::Value::Null),
         }).collect())
     }
 
@@ -176,11 +186,12 @@ impl QdrantProvider {
         Ok(search_response.result.into_iter().map(|r| ScoredChunk {
             chunk_id: r.id.to_string(),
             score: r.score,
-            content: r.payload.and_then(|p| p.get("content").and_then(|c| c.as_str())).unwrap_or_default().to_string(),
-            file_path: r.payload.and_then(|p| p.get("file_path").and_then(|c| c.as_str())).unwrap_or_default().to_string(),
-            start_line: r.payload.and_then(|p| p.get("start_line").and_then(|c| c.as_u64())).unwrap_or_default() as usize,
-            end_line: r.payload.and_then(|p| p.get("end_line").and_then(|c| c.as_u64())).unwrap_or_default() as usize,
+            content: r.payload.as_ref().and_then(|p| p.get("content").and_then(|c| c.as_str())).unwrap_or_default().to_string(),
+            file_path: r.payload.as_ref().and_then(|p| p.get("file_path").and_then(|c| c.as_str())).unwrap_or_default().to_string(),
+            start_line: r.payload.as_ref().and_then(|p| p.get("start_line").and_then(|c| c.as_u64())).unwrap_or_default() as usize,
+            end_line: r.payload.as_ref().and_then(|p| p.get("end_line").and_then(|c| c.as_u64())).unwrap_or_default() as usize,
             project_id: project_id.to_string(),
+            metadata: r.payload.map(|p| serde_json::to_value(p).unwrap_or(serde_json::Value::Null)).unwrap_or(serde_json::Value::Null),
         }).collect())
     }
 }

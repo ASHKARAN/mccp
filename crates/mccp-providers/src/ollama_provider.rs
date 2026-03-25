@@ -3,6 +3,7 @@ use mccp_core::*;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tracing;
 use crate::providers::known_dimensions;
 
 /// Ollama embedding provider — implements EmbeddingProvider with auto-dimension detection.
@@ -253,58 +254,8 @@ impl LlmProvider for OllamaProvider {
         }
     }
 
-    fn id(&self) -> String {
-        format!("ollama-{}", self.model)
-    }
-
-    fn name(&self) -> String {
-        "Ollama".to_string()
-    }
-
-    fn version(&self) -> String {
-        "1.0.0".to_string()
-    }
-
-    fn models(&self) -> Vec<String> {
-        vec![
-            "llama2".to_string(),
-            "codellama".to_string(),
-            "mistral".to_string(),
-            "gemma".to_string(),
-            "phi".to_string(),
-            "llava".to_string(),
-        ]
-    }
-
-    fn current_model(&self) -> String {
-        self.model.clone()
-    }
-
-    fn set_model(&mut self, model: String) -> Result<()> {
-        self.model = model;
-        Ok(())
-    }
-
-    async fn download_model(&self, model: &str) -> Result<()> {
-        let request = OllamaPullRequest {
-            name: model.to_string(),
-        };
-
-        let response = self.client
-            .post(&format!("{}/api/pull", self.endpoint))
-            .header("Content-Type", "application/json")
-            .timeout(Duration::from_secs(300)) // 5 minutes for model download
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| Error::ProviderError(e.to_string()))?;
-
-        if !response.status().is_success() {
-            let error_text = response.text().await.unwrap_or_default();
-            return Err(Error::ProviderError(format!("Failed to download model {}: {}", model, error_text)));
-        }
-
-        Ok(())
+    fn provider_fingerprint(&self) -> String {
+        format!("ollama:{}", self.model)
     }
 }
 
