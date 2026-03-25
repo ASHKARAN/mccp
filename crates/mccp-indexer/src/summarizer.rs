@@ -5,7 +5,7 @@ use mccp_core::*;
 #[derive(Debug, Clone)]
 pub struct Summarizer {
     /// LLM provider for generating summaries
-    llm_provider: Option<LlmProvider>,
+    llm_provider: Option<std::sync::Arc<dyn LlmProvider>>,
 }
 
 impl Summarizer {
@@ -17,7 +17,7 @@ impl Summarizer {
     }
 
     /// Set the LLM provider
-    pub fn with_provider(mut self, provider: LlmProvider) -> Self {
+    pub fn with_provider(mut self, provider: std::sync::Arc<dyn LlmProvider>) -> Self {
         self.llm_provider = Some(provider);
         self
     }
@@ -25,14 +25,14 @@ impl Summarizer {
     /// Generate a summary for a code chunk
     pub async fn summarize(&self, chunk: &Chunk) -> Result<String> {
         if let Some(provider) = &self.llm_provider {
-            self.generate_summary_with_llm(chunk, provider).await
+            self.generate_summary_with_llm(chunk, provider.as_ref()).await
         } else {
             self.generate_fallback_summary(chunk)
         }
     }
 
     /// Generate a summary using an LLM provider
-    async fn generate_summary_with_llm(&self, chunk: &Chunk, provider: &LlmProvider) -> Result<String> {
+    async fn generate_summary_with_llm(&self, chunk: &Chunk, provider: &dyn LlmProvider) -> Result<String> {
         let prompt = self.build_summary_prompt(chunk);
         
         // TODO: Implement LLM provider interface

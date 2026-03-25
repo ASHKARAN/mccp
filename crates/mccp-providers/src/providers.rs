@@ -117,8 +117,7 @@ impl LlmProvider for OpenAiProvider {
 
         response_data.choices
             .first()
-            .and_then(|choice| choice.message.content.as_ref())
-            .cloned()
+            .map(|choice| choice.message.content.clone())
             .ok_or_else(|| Error::ProviderError("No response content".to_string()))
     }
 

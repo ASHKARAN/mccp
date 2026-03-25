@@ -1880,19 +1880,6 @@ dependencies = [
 
 [[package]]
 name = "hyper-tls"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6183ddfa99b85da61a140bea0efc93fdf56ceaa041b37d553518030827f9905"
-dependencies = [
- "bytes",
- "hyper 0.14.32",
- "native-tls",
- "tokio",
- "tokio-native-tls",
-]
-
-[[package]]
-name = "hyper-tls"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "70206fc6890eaca9fde8a0bf71caa2ddfc9fe045ac9e5c70df101a7dbde866e0"
@@ -2609,9 +2596,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "crossbeam",
  "dashmap",
  "glob",
+ "ignore",
  "mccp-core",
  "notify",
  "rayon",
@@ -2621,6 +2610,8 @@ dependencies = [
  "sha2",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
+ "tree-sitter 0.20.10",
  "uuid",
  "walkdir",
 ]
@@ -2721,7 +2712,6 @@ checksum = "9bf4e7146e30ad172c42c39b3246864bd2d3c6396780711a1baf749cfe423e21"
 dependencies = [
  "base64 0.21.7",
  "hyper 0.14.32",
- "hyper-tls 0.5.0",
  "indexmap 2.13.0",
  "ipnet",
  "metrics 0.22.4",
@@ -2729,7 +2719,6 @@ dependencies = [
  "quanta",
  "thiserror 1.0.69",
  "tokio",
- "tracing",
 ]
 
 [[package]]
@@ -3833,7 +3822,7 @@ dependencies = [
  "http-body-util",
  "hyper 1.8.1",
  "hyper-rustls 0.27.7",
- "hyper-tls 0.6.0",
+ "hyper-tls",
  "hyper-util",
  "js-sys",
  "log",

@@ -360,6 +360,51 @@ impl Filters {
 /// JSON schema type for structured LLM output
 pub type JsonSchema = serde_json::Value;
 
+/// A summary of a file or code section
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Summary {
+    pub id: String,
+    pub project_id: String,
+    pub file_path: String,
+    pub content: String,
+    pub summary_text: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Context at a specific file location (symbols + chunks)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Context {
+    pub project_id: String,
+    pub file_path: String,
+    pub line: usize,
+    pub column: usize,
+    pub symbols: Vec<Symbol>,
+    pub chunks: Vec<Chunk>,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
+
+/// Statistics for a single project
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectStats {
+    pub project_id: String,
+    pub total_symbols: usize,
+    pub total_chunks: usize,
+    pub total_summaries: usize,
+    pub total_tokens: usize,
+    pub avg_tokens: usize,
+    pub by_kind: std::collections::HashMap<SymbolKind, usize>,
+    pub last_updated: chrono::DateTime<chrono::Utc>,
+}
+
+/// Overall storage statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageStats {
+    pub total_projects: usize,
+    pub total_symbols: usize,
+    pub total_chunks: usize,
+    pub total_summaries: usize,
+}
+
 /// Embedding provider trait
 #[async_trait::async_trait]
 pub trait EmbeddingProvider: Send + Sync {
@@ -377,7 +422,7 @@ pub trait EmbeddingProvider: Send + Sync {
 
 /// LLM provider trait
 #[async_trait::async_trait]
-pub trait LlmProvider: Send + Sync {
+pub trait LlmProvider: Send + Sync + std::fmt::Debug {
     async fn complete(&self, prompt: &str, schema: Option<&JsonSchema>) -> Result<String>;
     async fn stream(&self, prompt: &str) -> Result<tokio::sync::mpsc::Receiver<String>>;
     fn provider_fingerprint(&self) -> String;

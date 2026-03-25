@@ -17,7 +17,7 @@ pub struct ProviderInfo {
 #[derive(Debug, Clone)]
 pub struct ProviderManager {
     /// Registered providers
-    providers: Arc<DashMap<String, Arc<dyn LlmProvider>>>,
+    providers: Arc<DashMap<String, Arc<dyn LlmProvider + 'static>>>,
     
     /// Provider configurations
     configs: Arc<DashMap<String, ProviderConfig>>,
@@ -57,11 +57,13 @@ impl ProviderManager {
             loop {
                 interval.tick().await;
                 
-                // Check health of all providers
-                for provider_entry in providers.iter() {
-                    let provider_id = provider_entry.key().clone();
-                    let provider = provider_entry.value();
-                    
+                // Collect provider IDs and clones first to avoid DashMap borrow in async
+                let provider_list: Vec<(String, Arc<dyn LlmProvider + 'static>)> = providers
+                    .iter()
+                    .map(|e| (e.key().clone(), e.value().clone()))
+                    .collect();
+
+                for (provider_id, provider) in provider_list {
                     let health = provider.health().await;
                     health_status.insert(provider_id, health);
                 }
@@ -84,7 +86,7 @@ impl ProviderManager {
     }
 
     /// Register a new LLM provider
-    pub async fn register_provider(&self, provider: Arc<dyn LlmProvider>) -> Result<()> {
+    pub async fn register_provider(&self, provider: Arc<dyn LlmProvider + 'static>) -> Result<()> {
         let provider_id = provider.provider_fingerprint();
         let health = provider.health().await;
         
@@ -106,7 +108,7 @@ impl ProviderManager {
     }
 
     /// Get a provider by ID
-    pub async fn get_provider(&self, provider_id: &str) -> Option<Arc<dyn LlmProvider>> {
+    pub async fn get_provider(&self, provider_id: &str) -> Option<Arc<dyn LlmProvider + 'static>> {
         self.providers.get(provider_id).map(|p| p.clone())
     }
 
@@ -145,7 +147,7 @@ impl ProviderManager {
     }
 
     /// Get healthy providers
-    pub async fn get_healthy_providers(&self) -> Vec<Arc<dyn LlmProvider>> {
+    pub async fn get_healthy_providers(&self) -> Vec<Arc<dyn LlmProvider + 'static>> {
         let mut providers = Vec::new();
         
         for provider_entry in self.providers.iter() {

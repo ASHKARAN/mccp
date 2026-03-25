@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use chrono::Utc;
+use tokio::io::AsyncWriteExt as _;
 
 /// Cost tracking configuration
 #[derive(Debug, Clone)]

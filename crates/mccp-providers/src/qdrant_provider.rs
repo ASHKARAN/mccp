@@ -207,7 +207,7 @@ impl VectorStoreProvider for QdrantProvider {
         drop(encoder);
 
         // Create collection if it doesn't exist
-        if let Err(_) = self.create_collection(project_id, chunks[0].vector.len()).await {
+        if let Err(_) = self.create_collection(project_id, chunks[0].embedding.len()).await {
             // Collection might already exist, that's fine
         }
 
@@ -217,14 +217,12 @@ impl VectorStoreProvider for QdrantProvider {
         let points: Vec<PointStruct> = chunks.iter().map(|chunk| PointStruct {
             id: chunk.chunk_id.clone(),
             vector: HashMap::from([
-                ("dense".to_string(), chunk.vector.clone()),
+                ("dense".to_string(), chunk.embedding.clone()),
             ]),
             payload: Some(HashMap::from([
                 ("content".to_string(), serde_json::Value::String(chunk.content.clone())),
-                ("file_path".to_string(), serde_json::Value::String(chunk.file_path.clone())),
-                ("start_line".to_string(), serde_json::Value::Number(serde_json::Number::from(chunk.start_line))),
-                ("end_line".to_string(), serde_json::Value::Number(serde_json::Number::from(chunk.end_line))),
                 ("project_id".to_string(), serde_json::Value::String(project_id.to_string())),
+                ("metadata".to_string(), chunk.metadata.clone()),
             ])),
         }).collect();
 
@@ -324,7 +322,7 @@ impl VectorStoreProvider for QdrantProvider {
         drop(encoder);
 
         // Create collection if it doesn't exist
-        if let Err(_) = self.create_collection(project_id, chunks[0].dense_vector.len()).await {
+        if let Err(_) = self.create_collection(project_id, chunks[0].dense.len()).await {
             // Collection might already exist, that's fine
         }
 
@@ -334,15 +332,12 @@ impl VectorStoreProvider for QdrantProvider {
         let points: Vec<PointStruct> = chunks.iter().map(|chunk| PointStruct {
             id: chunk.chunk_id.clone(),
             vector: HashMap::from([
-                ("dense".to_string(), chunk.dense_vector.clone()),
-                ("sparse".to_string(), chunk.sparse_vector.clone()),
+                ("dense".to_string(), chunk.dense.clone()),
             ]),
             payload: Some(HashMap::from([
                 ("content".to_string(), serde_json::Value::String(chunk.content.clone())),
-                ("file_path".to_string(), serde_json::Value::String(chunk.file_path.clone())),
-                ("start_line".to_string(), serde_json::Value::Number(serde_json::Number::from(chunk.start_line))),
-                ("end_line".to_string(), serde_json::Value::Number(serde_json::Number::from(chunk.end_line))),
                 ("project_id".to_string(), serde_json::Value::String(project_id.to_string())),
+                ("metadata".to_string(), chunk.metadata.clone()),
             ])),
         }).collect();
 
