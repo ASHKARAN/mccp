@@ -289,6 +289,58 @@ impl QueryCacheKey {
     }
 }
 
+/// Embedding provider trait
+#[async_trait::async_trait]
+pub trait EmbeddingProvider: Send + Sync {
+    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>;
+    async fn embed_one(&self, text: &str) -> Result<Vec<f32>>;
+    fn dimensions(&self) -> usize;
+    fn provider_fingerprint(&self) -> String;
+    async fn health(&self) -> ProviderHealth;
+
+    /// Probe the embedding dimensions by embedding a test string
+    async fn probe_dimensions(&self) -> Result<usize> {
+        Ok(self.embed_one("probe").await?.len())
+    }
+}
+
+/// LLM provider trait
+#[async_trait::async_trait]
+pub trait LlmProvider: Send + Sync {
+    async fn complete(&self, prompt: &str, schema: Option<&JsonSchema>) -> Result<String>;
+    async fn stream(&self, prompt: &str) -> Result<tokio::sync::mpsc::Receiver<String>>;
+    fn provider_fingerprint(&self) -> String;
+    async fn health(&self) -> ProviderHealth;
+}
+
+/// Vector store provider trait
+#[async_trait::async_trait]
+pub trait VectorStoreProvider: Send + Sync {
+    async fn upsert(&self, project_id: &str, chunks: &[EmbeddedChunk]) -> Result<()>;
+    async fn search(&self, project_id: &str, query: &[f32], top_k: usize, filters: &Filters)
+        -> Result<Vec<ScoredChunk>>;
+    async fn delete_project(&self, project_id: &str) -> Result<()>;
+    async fn health(&self) -> ProviderHealth;
+
+    fn supports_hybrid(&self) -> bool { false }
+    async fn upsert_with_sparse(
+        &self, project_id: &str, chunks: &[SparseEmbeddedChunk]
+    ) -> Result<()> {
+        Err(anyhow::anyhow!("provider does not support sparse vectors"))
+    }
+    async fn hybrid_search(
+        &self,
+        project_id: &str,
+        dense_query: &[f32],
+        sparse_text: &str,
+        top_k: usize,
+        filters: &Filters,
+    ) -> Result<Vec<ScoredChunk>> {
+        // fallback: dense-only
+        self.search(project_id, dense_query, top_k, filters).await
+    }
+}
+
 /// Metrics for observability
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metrics {

@@ -1,8 +1,9 @@
 use super::*;
 use mccp_core::*;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::time::{Duration, Instant};
+use ignore::WalkBuilder;
 
 /// Indexing pipeline for processing source files
 pub struct IndexingPipeline {
@@ -16,6 +17,8 @@ pub struct IndexingPipeline {
     file_hash_cache: dashmap::DashMap<String, String>,
     processing_queue: tokio::sync::mpsc::UnboundedSender<IndexJob>,
     processing_workers: Vec<tokio::task::JoinHandle<()>>,
+    progress_tx: tokio::sync::watch::Sender<Option<IndexProgress>>,
+    progress_rx: tokio::sync::watch::Receiver<Option<IndexProgress>>,
 }
 
 /// A job to index a specific file
@@ -32,6 +35,7 @@ impl IndexingPipeline {
     /// Create a new indexing pipeline
     pub fn new(project: Project, config: IndexerConfig) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel();
+        let (progress_tx, progress_rx) = watch::channel(None);
         
         let chunker = Chunker::new(ChunkConfig {
             max_tokens: config.max_chunk_tokens,
@@ -75,7 +79,20 @@ impl IndexingPipeline {
             file_hash_cache: dashmap::DashMap::new(),
             processing_queue: tx,
             processing_workers: workers,
+            progress_tx,
+            progress_rx,
         }
+    }
+
+    /// Emit progress update
+    fn emit_progress(&self, phase: &str, current: usize, total: usize, percentage: u8) {
+        let _ = self.progress_tx.send(Some(IndexProgress {
+            phase: phase.to_string(),
+            current,
+            total,
+            percentage,
+            project_id: self.project.id.as_str().to_string(),
+        }));
     }
 
     /// Start the indexing pipeline
@@ -114,7 +131,7 @@ impl IndexingPipeline {
 
     /// Index existing files in the project
     async fn index_existing_files(&self) -> Result<()> {
-        let files = self.project.source_files();
+        let files = self.walk_project_files();
         
         for file_path in files {
             let relative_path = self.project.relative_path(&file_path)
@@ -237,6 +254,45 @@ impl IndexingPipeline {
             is_watching: self.config.watch_enabled,
         }
     }
+
+    /// Walk project files respecting .gitignore and other ignore patterns
+    fn walk_project_files(&self) -> Vec<PathBuf> {
+        let global_ignore = dirs::home_dir().map(|h| h.join(".mccp").join("ignore"));
+
+        let mut builder = WalkBuilder::new(&self.project.root_path);
+        builder
+            .hidden(false)          // index dotfiles that aren't gitignored
+            .git_ignore(true)
+            .git_global(true)
+            .git_exclude(true);
+
+        if let Some(ref p) = global_ignore {
+            if p.exists() { builder.add_ignore(p); }
+        }
+
+        // Add extra ignore patterns from config
+        for pattern in &self.config.extra_ignore_patterns {
+            builder.add_ignore(pattern);
+        }
+
+        builder
+            .build()
+            .filter_map(|entry| entry.ok())
+            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+            .filter(|e| is_supported_extension(e.path()))
+            .map(|e| e.into_path())
+            .collect()
+    }
+}
+
+/// Indexing progress event
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct IndexProgress {
+    pub phase:      String,
+    pub current:    usize,
+    pub total:      usize,
+    pub percentage: u8,
+    pub project_id: String,
 }
 
 /// Indexing status

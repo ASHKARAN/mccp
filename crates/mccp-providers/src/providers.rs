@@ -3,6 +3,7 @@ use mccp_core::*;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use crate::bm25::BM25Encoder;
 
 /// OpenAI provider implementation
 #[derive(Debug, Clone)]

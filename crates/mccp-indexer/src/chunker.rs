@@ -1,5 +1,6 @@
 use super::*;
 use mccp_core::*;
+use tree_sitter::{Language, Parser, Node};
 
 /// Chunker for splitting source files into chunks
 #[derive(Debug, Clone)]
@@ -61,9 +62,34 @@ impl Chunker {
 
     /// Chunk using tree-sitter parser (for supported languages)
     fn chunk_with_parser(&self, file: &SourceFile) -> Vec<Chunk> {
-        // For now, fall back to simple chunking
-        // TODO: Implement tree-sitter integration
-        self.chunk_simple(file)
+        let Some(cfg) = lang_config(file.language) else {
+            return self.chunk_simple(file);
+        };
+        let mut parser = Parser::new();
+        parser.set_language(cfg.ts_language)
+              .expect("grammar version mismatch — update tree-sitter-* crates");
+
+        let tree = match parser.parse(&file.content, None) {
+            Some(t) => t,
+            None    => return self.chunk_simple(file),
+        };
+
+        let mut raw_chunks = Vec::new();
+        collect_splittable_nodes(
+            tree.root_node(),
+            &file.content,
+            cfg.splittable_types,
+            &mut raw_chunks,
+            &file.path.to_string_lossy(),
+            file.language,
+        );
+
+        if raw_chunks.is_empty() {
+            return self.chunk_simple(file);
+        }
+
+        let refined = self.refine_large_chunks(raw_chunks);
+        self.apply_overlap_ts_style(refined)
     }
 
     /// Apply overlap between adjacent chunks
@@ -109,6 +135,173 @@ impl Chunker {
             min_tokens,
         }
     }
+}
+
+/// Language configuration for AST chunking
+struct LangConfig {
+    ts_language: tree_sitter::Language,
+    splittable_types: &'static [&'static str],
+}
+
+/// Get language configuration for tree-sitter
+fn lang_config(lang: mccp_core::Language) -> Option<LangConfig> {
+    match lang {
+        mccp_core::Language::Rust => Some(LangConfig {
+            ts_language: tree_sitter_rust::language(),
+            splittable_types: &[
+                "function_item", "impl_item", "struct_item",
+                "enum_item", "trait_item", "mod_item",
+            ],
+        }),
+        mccp_core::Language::TypeScript | mccp_core::Language::JavaScript => Some(LangConfig {
+            ts_language: tree_sitter_typescript::language_typescript(),
+            splittable_types: &[
+                "function_declaration", "arrow_function", "class_declaration",
+                "method_definition", "export_statement",
+                "interface_declaration", "type_alias_declaration",
+            ],
+        }),
+        mccp_core::Language::Python => Some(LangConfig {
+            ts_language: tree_sitter_python::language(),
+            splittable_types: &[
+                "function_definition", "class_definition",
+                "decorated_definition", "async_function_definition",
+            ],
+        }),
+        mccp_core::Language::Go => Some(LangConfig {
+            ts_language: tree_sitter_go::language(),
+            splittable_types: &[
+                "function_declaration", "method_declaration",
+                "type_declaration", "var_declaration", "const_declaration",
+            ],
+        }),
+        mccp_core::Language::Java => Some(LangConfig {
+            ts_language: tree_sitter_java::language(),
+            splittable_types: &[
+                "method_declaration", "class_declaration",
+                "interface_declaration", "constructor_declaration",
+            ],
+        }),
+        _ => None,
+    }
+}
+
+/// Raw chunk before refinement
+#[derive(Debug, Clone)]
+struct RawChunk {
+    content: String,
+    start_line: usize,
+    end_line: usize,
+    start_byte: usize,
+    end_byte: usize,
+    path: String,
+    language: mccp_core::Language,
+}
+
+/// Collect splittable nodes from AST
+fn collect_splittable_nodes(
+    node: Node,
+    src: &str,
+    splittable: &[&str],
+    out: &mut Vec<RawChunk>,
+    path: &str,
+    lang: mccp_core::Language,
+) {
+    if splittable.contains(&node.kind()) {
+        let text = &src[node.byte_range()];
+        if !text.trim().is_empty() {
+            out.push(RawChunk {
+                content: text.to_string(),
+                start_line: node.start_position().row + 1,
+                end_line:   node.end_position().row + 1,
+                start_byte: node.start_byte(),
+                end_byte:   node.end_byte(),
+                path:       path.to_string(),
+                language:   lang,
+            });
+        }
+        // Do NOT recurse into a matched node — its children are part of this chunk
+        return;
+    }
+    for child in node.children(&mut node.walk()) {
+        collect_splittable_nodes(child, src, splittable, out, path, lang);
+    }
+}
+
+impl Chunker {
+    /// Refine oversized chunks by line splitting
+    fn refine_large_chunks(&self, chunks: Vec<RawChunk>) -> Vec<RawChunk> {
+        let max_chars = self.config.max_tokens * 4; // ~4 chars per token
+        let mut out = Vec::new();
+        for chunk in chunks {
+            if chunk.content.len() <= max_chars {
+                out.push(chunk);
+            } else {
+                out.extend(self.split_large_chunk_by_line(chunk, max_chars));
+            }
+        }
+        out
+    }
+
+    /// Split oversized chunk by lines
+    fn split_large_chunk_by_line(&self, chunk: RawChunk, max_chars: usize) -> Vec<RawChunk> {
+        let mut result = Vec::new();
+        let mut current_lines: Vec<&str> = Vec::new();
+        let mut current_len = 0;
+        let mut start_line = chunk.start_line;
+
+        for (i, line) in chunk.content.lines().enumerate() {
+            current_len += line.len() + 1;
+            current_lines.push(line);
+            if current_len >= max_chars {
+                result.push(RawChunk {
+                    content:    current_lines.join("\n"),
+                    start_line,
+                    end_line:   chunk.start_line + i,
+                    start_byte: 0, end_byte: 0, // approximate
+                    path:       chunk.path.clone(),
+                    language:   chunk.language,
+                });
+                start_line = chunk.start_line + i + 1;
+                current_lines.clear();
+                current_len = 0;
+            }
+        }
+        if !current_lines.is_empty() {
+            result.push(RawChunk {
+                content:    current_lines.join("\n"),
+                start_line,
+                end_line:   chunk.end_line,
+                start_byte: 0, end_byte: 0,
+                path:       chunk.path.clone(),
+                language:   chunk.language,
+            });
+        }
+        result
+    }
+
+    /// Apply overlap from previous tail (TypeScript style)
+    fn apply_overlap_ts_style(&self, chunks: Vec<RawChunk>) -> Vec<Chunk> {
+        let overlap = self.config.overlap_tokens * 4;
+        let mut out = Vec::new();
+        for (i, raw) in chunks.iter().enumerate() {
+            let content = if i > 0 && overlap > 0 {
+                let prev = &chunks[i - 1].content;
+                let tail = &prev[prev.len().saturating_sub(overlap)..];
+                format!("{}\n{}", tail, raw.content)
+            } else {
+                raw.content.clone()
+            };
+            out.push(Chunk::new(
+                String::new(), // project_id filled by pipeline
+                raw.path.clone(),
+                content,
+                raw.start_byte, raw.end_byte,
+                raw.start_line, raw.end_line,
+                ChunkScope::Method,
+            ));
+        }
+        out
 }
 
 /// Chunking statistics

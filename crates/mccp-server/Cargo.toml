@@ -5,6 +5,10 @@ edition = "2021"
 authors = ["Your Name <your.email@example.com>"]
 description = "MCP server for mccp"
 
+[[bin]]
+name = "mccp-server"
+path = "src/main.rs"
+
 [dependencies]
 mccp-core = { path = "../mccp-core" }
 mccp-indexer = { path = "../mccp-indexer" }
@@ -19,3 +23,7 @@ thiserror = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 uuid = { version = "1.0", features = ["v4", "serde"] }
+axum = "0.7"
+axum-test = "0.7"
+tokio-stream = "0.1"
+async-stream = "0.3"
