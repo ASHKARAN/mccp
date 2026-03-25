@@ -5,6 +5,23 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use crate::bm25::BM25Encoder;
 
+/// Return known embedding dimensions for well-known model names.
+/// Returns `None` for unknown models — callers should fall back to `probe_dimensions()`.
+pub fn known_dimensions(model: &str) -> Option<usize> {
+    match model {
+        m if m.contains("nomic-embed-text")       => Some(768),
+        m if m.contains("mxbai-embed-large")      => Some(1024),
+        m if m.contains("text-embedding-3-small") => Some(1536),
+        m if m.contains("text-embedding-3-large") => Some(3072),
+        m if m.contains("all-minilm")             => Some(384),
+        m if m.contains("bge-large")              => Some(1024),
+        m if m.contains("bge-small")              => Some(512),
+        m if m.contains("e5-large")               => Some(1024),
+        m if m.contains("e5-small")               => Some(384),
+        _                                         => None,
+    }
+}
+
 /// OpenAI provider implementation
 #[derive(Debug, Clone)]
 pub struct OpenAiProvider {

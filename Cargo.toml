@@ -6,6 +6,7 @@ members = [
     "crates/mccp-indexer",
     "crates/mccp-storage",
     "crates/mccp-providers",
+    "crates/mccp-server",
 ]
 
 [package]

@@ -3,6 +3,111 @@ use mccp_core::*;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use crate::providers::known_dimensions;
+
+/// Ollama embedding provider — implements EmbeddingProvider with auto-dimension detection.
+#[derive(Debug, Clone)]
+pub struct OllamaEmbeddingProvider {
+    client: Client,
+    endpoint: String,
+    model: String,
+    dims: usize,
+    timeout: Duration,
+}
+
+impl OllamaEmbeddingProvider {
+    /// Create a new embedding provider.
+    /// `dims = 0` triggers auto-detection via a probe call; non-zero values are used as-is.
+    pub fn new(endpoint: String, model: String, dims: usize) -> Self {
+        let resolved_dims = if dims > 0 {
+            dims
+        } else {
+            known_dimensions(&model).unwrap_or(0) // 0 → will be probed on first use
+        };
+        Self {
+            client: Client::new(),
+            endpoint,
+            model,
+            dims: resolved_dims,
+            timeout: Duration::from_secs(60),
+        }
+    }
+
+    /// Create with explicit dimension auto-detection via probe (async).
+    pub async fn with_auto_detect(endpoint: String, model: String) -> anyhow::Result<Self> {
+        let mut provider = Self::new(endpoint, model.clone(), 0);
+        if provider.dims == 0 {
+            let probed = provider.probe_dimensions().await
+                .map_err(|e| anyhow::anyhow!("failed to probe embedding dimensions for {}: {}", model, e))?;
+            tracing::info!("auto-detected embedding dimensions for '{}': {}", model, probed);
+            provider.dims = probed;
+        }
+        Ok(provider)
+    }
+}
+
+#[async_trait::async_trait]
+impl EmbeddingProvider for OllamaEmbeddingProvider {
+    async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        let mut results = Vec::with_capacity(texts.len());
+        for text in texts {
+            results.push(self.embed_one(text).await?);
+        }
+        Ok(results)
+    }
+
+    async fn embed_one(&self, text: &str) -> Result<Vec<f32>> {
+        #[derive(Serialize)]
+        struct EmbedRequest<'a> { model: &'a str, prompt: &'a str }
+        #[derive(Deserialize)]
+        struct EmbedResponse { embedding: Vec<f32> }
+
+        let response = self.client
+            .post(format!("{}/api/embeddings", self.endpoint))
+            .timeout(self.timeout)
+            .json(&EmbedRequest { model: &self.model, prompt: text })
+            .send()
+            .await
+            .map_err(|e| Error::ProviderError(e.to_string()))?;
+
+        if !response.status().is_success() {
+            let err = response.text().await.unwrap_or_default();
+            return Err(Error::ProviderError(format!("Ollama embed error: {}", err)));
+        }
+
+        let data: EmbedResponse = response.json().await
+            .map_err(|e| Error::ProviderError(e.to_string()))?;
+        Ok(data.embedding)
+    }
+
+    fn dimensions(&self) -> usize { self.dims }
+
+    fn provider_fingerprint(&self) -> String {
+        format!("ollama-embed:{}:{}", self.endpoint, self.model)
+    }
+
+    async fn health(&self) -> ProviderHealth {
+        match self.client.get(format!("{}/api/tags", self.endpoint))
+            .timeout(Duration::from_secs(5)).send().await
+        {
+            Ok(r) if r.status().is_success() => ProviderHealth {
+                status: ProviderStatusType::Healthy,
+                last_check: chrono::Utc::now(),
+                error_message: None,
+            },
+            Ok(r) => ProviderHealth {
+                status: ProviderStatusType::Unhealthy,
+                last_check: chrono::Utc::now(),
+                error_message: Some(format!("HTTP {}", r.status())),
+            },
+            Err(e) => ProviderHealth {
+                status: ProviderStatusType::Unhealthy,
+                last_check: chrono::Utc::now(),
+                error_message: Some(e.to_string()),
+            },
+        }
+    }
+}
 
 /// Ollama provider implementation
 #[derive(Debug, Clone)]

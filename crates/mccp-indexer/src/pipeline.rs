@@ -18,7 +18,7 @@ pub struct IndexingPipeline {
     processing_queue: tokio::sync::mpsc::UnboundedSender<IndexJob>,
     processing_workers: Vec<tokio::task::JoinHandle<()>>,
     progress_tx: tokio::sync::watch::Sender<Option<IndexProgress>>,
-    progress_rx: tokio::sync::watch::Receiver<Option<IndexProgress>>,
+    pub progress_rx: tokio::sync::watch::Receiver<Option<IndexProgress>>,
 }
 
 /// A job to index a specific file
