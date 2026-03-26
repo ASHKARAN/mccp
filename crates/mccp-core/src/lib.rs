@@ -6,6 +6,7 @@ pub mod graph;
 pub mod query;
 pub mod config;
 pub mod error;
+pub mod schema;
 
 pub use project::*;
 pub use file::*;
@@ -15,6 +16,7 @@ pub use graph::*;
 pub use query::*;
 pub use config::*;
 pub use error::*;
+pub use schema::*;
 
 pub use serde::{Serialize, Deserialize};
 

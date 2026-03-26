@@ -7,6 +7,7 @@ use axum::{
     extract::Request,
     body::Bytes,
     http::{HeaderMap, HeaderValue},
+    extract::Query,
 };
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -42,6 +43,7 @@ pub struct AppState {
     pub config: Config,
     pub query_engine: QueryEngine,
     pub pipeline: Arc<mccp_indexer::IndexingPipeline>,
+    pub code_intel: Arc<tokio::sync::RwLock<Option<CodeIntelSnapshot>>>,
 }
 
 impl AppState {
@@ -57,6 +59,7 @@ impl AppState {
             config,
             query_engine,
             pipeline,
+            code_intel: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 }
@@ -89,6 +92,14 @@ pub async fn run_http(state: AppState, addr: &str) -> anyhow::Result<()> {
         .route("/index/status", get(index_status))
         .route("/projects", get(list_projects))
         .route("/webhook/push", post(webhook_push))
+        .route("/v1/code_intel/snapshot", get(code_intel_snapshot))
+        .route("/v1/code_intel/symbol", get(code_intel_symbol))
+        .route("/v1/code_intel/usages", get(code_intel_usages))
+        .route("/v1/code_intel/callers", get(code_intel_callers))
+        .route("/v1/code_intel/callees", get(code_intel_callees))
+        .route("/v1/code_intel/cycles", get(code_intel_cycles))
+        .route("/v1/code_intel/unused", get(code_intel_unused))
+        .route("/v1/code_intel/refresh", post(code_intel_refresh))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth_middleware))
         .with_state(state);
 
@@ -471,7 +482,7 @@ pub struct HttpWriteFileRequest {
 }
 
 /// Response envelope for REST API
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct ApiResponse<T> {
     pub ok: bool,
     pub data: Option<T>,
@@ -485,6 +496,142 @@ impl<T: Serialize> ApiResponse<T> {
     
     pub fn err(msg: impl ToString) -> Json<Self> {
         Json(Self { ok: false, data: None, err: Some(msg.to_string()) })
+    }
+}
+
+// ── V4-3 Code Intel query params ─────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct SymbolQuery {
+    pub name: String,
+}
+
+#[derive(Deserialize)]
+pub struct SymbolIdQuery {
+    pub symbol: String,
+}
+
+// ── V4-3 Code Intel handlers ─────────────────────────────────────────
+
+async fn code_intel_snapshot(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let guard = state.code_intel.read().await;
+    match guard.as_ref() {
+        Some(snap) => ApiResponse::ok(snap.clone()),
+        None => ApiResponse::err("no snapshot available; POST /v1/code_intel/refresh first"),
+    }
+}
+
+async fn code_intel_symbol(
+    State(state): State<AppState>,
+    Query(params): Query<SymbolQuery>,
+) -> impl IntoResponse {
+    let guard = state.code_intel.read().await;
+    match guard.as_ref() {
+        Some(snap) => {
+            let symbols: Vec<_> = snap.find_symbols(&params.name).into_iter().cloned().collect();
+            if symbols.is_empty() {
+                ApiResponse::err(format!("symbol '{}' not found", params.name))
+            } else {
+                ApiResponse::ok(symbols)
+            }
+        }
+        None => ApiResponse::err("no snapshot available"),
+    }
+}
+
+async fn code_intel_usages(
+    State(state): State<AppState>,
+    Query(params): Query<SymbolIdQuery>,
+) -> impl IntoResponse {
+    let guard = state.code_intel.read().await;
+    match guard.as_ref() {
+        Some(snap) => {
+            let usages: Vec<_> = snap.usages_of(&params.symbol).into_iter().cloned().collect();
+            ApiResponse::ok(usages)
+        }
+        None => ApiResponse::err("no snapshot available"),
+    }
+}
+
+async fn code_intel_callers(
+    State(state): State<AppState>,
+    Query(params): Query<SymbolIdQuery>,
+) -> impl IntoResponse {
+    let guard = state.code_intel.read().await;
+    match guard.as_ref() {
+        Some(snap) => {
+            let callers: Vec<String> = snap.callers_of(&params.symbol).into_iter().map(String::from).collect();
+            ApiResponse::ok(callers)
+        }
+        None => ApiResponse::err("no snapshot available"),
+    }
+}
+
+async fn code_intel_callees(
+    State(state): State<AppState>,
+    Query(params): Query<SymbolIdQuery>,
+) -> impl IntoResponse {
+    let guard = state.code_intel.read().await;
+    match guard.as_ref() {
+        Some(snap) => {
+            let callees: Vec<String> = snap.callees_of(&params.symbol).into_iter().map(String::from).collect();
+            ApiResponse::ok(callees)
+        }
+        None => ApiResponse::err("no snapshot available"),
+    }
+}
+
+async fn code_intel_cycles(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let guard = state.code_intel.read().await;
+    match guard.as_ref() {
+        Some(snap) => {
+            let report = mccp_indexer::CycleDetector::detect_all(snap);
+            ApiResponse::ok(report)
+        }
+        None => ApiResponse::err("no snapshot available"),
+    }
+}
+
+async fn code_intel_unused(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let guard = state.code_intel.read().await;
+    match guard.as_ref() {
+        Some(snap) => {
+            let unused: Vec<_> = snap.unused_symbols().into_iter().cloned().collect();
+            ApiResponse::ok(unused)
+        }
+        None => ApiResponse::err("no snapshot available"),
+    }
+}
+
+async fn code_intel_refresh(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    // Use current directory as project root (matches AppState::init default)
+    let project_root = std::path::PathBuf::from(".");
+    let analyzer = mccp_indexer::TreeSitterAnalyzer::new();
+    match analyzer.analyze(&project_root).await {
+        Ok(mut snap) => {
+            // Run cycle detection and annotate symbols
+            let report = mccp_indexer::CycleDetector::detect_all(&snap);
+            let cycled: std::collections::HashSet<String> = report.call_cycles.iter()
+                .chain(report.import_cycles.iter())
+                .flatten()
+                .cloned()
+                .collect();
+            for sym in &mut snap.symbols {
+                sym.in_cycle = cycled.contains(&sym.id);
+            }
+            let mut guard = state.code_intel.write().await;
+            *guard = Some(snap);
+            ApiResponse::ok("refresh complete")
+        }
+        Err(e) => ApiResponse::err(format!("analysis failed: {e}")),
     }
 }
 
@@ -507,5 +654,138 @@ mod tests {
         assert_eq!(response.status_code(), 200);
         let body: HealthResponse = response.json();
         assert_eq!(body.status, "ok");
+    }
+
+    // ── V4-3 Code Intel API tests ────────────────────────────────────
+
+    fn code_intel_app(state: AppState) -> Router {
+        Router::new()
+            .route("/v1/code_intel/snapshot", get(code_intel_snapshot))
+            .route("/v1/code_intel/symbol", get(code_intel_symbol))
+            .route("/v1/code_intel/usages", get(code_intel_usages))
+            .route("/v1/code_intel/callers", get(code_intel_callers))
+            .route("/v1/code_intel/callees", get(code_intel_callees))
+            .route("/v1/code_intel/cycles", get(code_intel_cycles))
+            .route("/v1/code_intel/unused", get(code_intel_unused))
+            .with_state(state)
+    }
+
+    #[tokio::test]
+    async fn test_code_intel_no_snapshot() {
+        let config = Config::default();
+        let state = AppState::init(config).await.unwrap();
+        let app = code_intel_app(state);
+        let server = TestServer::new(app).unwrap();
+
+        let resp = server.get("/v1/code_intel/snapshot").await;
+        assert_eq!(resp.status_code(), 200);
+        let body: ApiResponse<serde_json::Value> = resp.json();
+        assert!(!body.ok);
+        assert!(body.err.unwrap().contains("no snapshot"));
+    }
+
+    #[tokio::test]
+    async fn test_code_intel_symbol_lookup() {
+        let config = Config::default();
+        let state = AppState::init(config).await.unwrap();
+
+        // Pre-populate a snapshot
+        {
+            let mut snap = CodeIntelSnapshot::new("test".into());
+            snap.symbols.push(SymbolDef::new(
+                "Foo".into(), SymbolKind::Struct, "src/lib.rs".into(), 1, 10,
+            ));
+            snap.symbols.push(SymbolDef::new(
+                "bar".into(), SymbolKind::Function, "src/lib.rs".into(), 12, 20,
+            ));
+            *state.code_intel.write().await = Some(snap);
+        }
+
+        let app = code_intel_app(state);
+        let server = TestServer::new(app).unwrap();
+
+        // Found
+        let resp = server.get("/v1/code_intel/symbol").add_query_param("name", "Foo").await;
+        let body: ApiResponse<Vec<SymbolDef>> = resp.json();
+        assert!(body.ok);
+        assert_eq!(body.data.unwrap().len(), 1);
+
+        // Not found
+        let resp = server.get("/v1/code_intel/symbol").add_query_param("name", "Baz").await;
+        let body: ApiResponse<Vec<SymbolDef>> = resp.json();
+        assert!(!body.ok);
+    }
+
+    #[tokio::test]
+    async fn test_code_intel_callers_callees() {
+        let config = Config::default();
+        let state = AppState::init(config).await.unwrap();
+
+        {
+            let mut snap = CodeIntelSnapshot::new("test".into());
+            snap.call_edges.push(CallEdge { caller: "a".into(), callee: "b".into() });
+            snap.call_edges.push(CallEdge { caller: "c".into(), callee: "b".into() });
+            *state.code_intel.write().await = Some(snap);
+        }
+
+        let app = code_intel_app(state);
+        let server = TestServer::new(app).unwrap();
+
+        let resp = server.get("/v1/code_intel/callers").add_query_param("symbol", "b").await;
+        let body: ApiResponse<Vec<String>> = resp.json();
+        assert!(body.ok);
+        assert_eq!(body.data.unwrap().len(), 2);
+
+        let resp = server.get("/v1/code_intel/callees").add_query_param("symbol", "a").await;
+        let body: ApiResponse<Vec<String>> = resp.json();
+        assert!(body.ok);
+        assert_eq!(body.data.unwrap(), vec!["b"]);
+    }
+
+    #[tokio::test]
+    async fn test_code_intel_cycles() {
+        let config = Config::default();
+        let state = AppState::init(config).await.unwrap();
+
+        {
+            let mut snap = CodeIntelSnapshot::new("test".into());
+            snap.call_edges.push(CallEdge { caller: "a".into(), callee: "b".into() });
+            snap.call_edges.push(CallEdge { caller: "b".into(), callee: "a".into() });
+            *state.code_intel.write().await = Some(snap);
+        }
+
+        let app = code_intel_app(state);
+        let server = TestServer::new(app).unwrap();
+
+        let resp = server.get("/v1/code_intel/cycles").await;
+        let body: ApiResponse<mccp_indexer::CycleReport> = resp.json();
+        assert!(body.ok);
+        let report = body.data.unwrap();
+        assert!(!report.call_cycles.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_code_intel_unused() {
+        let config = Config::default();
+        let state = AppState::init(config).await.unwrap();
+
+        {
+            let mut snap = CodeIntelSnapshot::new("test".into());
+            let mut used = SymbolDef::new("used".into(), SymbolKind::Function, "a.rs".into(), 1, 5);
+            used.references.push(SymbolRef { file: "b.rs".into(), line: 10, context: "used()".into() });
+            snap.symbols.push(used);
+            snap.symbols.push(SymbolDef::new("unused".into(), SymbolKind::Function, "a.rs".into(), 10, 15));
+            *state.code_intel.write().await = Some(snap);
+        }
+
+        let app = code_intel_app(state);
+        let server = TestServer::new(app).unwrap();
+
+        let resp = server.get("/v1/code_intel/unused").await;
+        let body: ApiResponse<Vec<SymbolDef>> = resp.json();
+        assert!(body.ok);
+        let unused = body.data.unwrap();
+        assert_eq!(unused.len(), 1);
+        assert_eq!(unused[0].name, "unused");
     }
 }
