@@ -557,7 +557,16 @@ async fn cmd_daemon() -> anyhow::Result<()> {
     println!("\n  {}", bold!(cyan!("MCCP Daemon")));
     println!();
 
-    let actions = vec!["Start daemon", "Stop daemon", "Check status"];
+    let running = crate::daemon::is_running().await;
+    let status_label = if running { "running ✓" } else { "stopped" };
+    println!("  {} {}", dim!("status:"), bold!(status_label));
+    println!();
+
+    let actions = if running {
+        vec!["Stop daemon", "Restart daemon", "Check status"]
+    } else {
+        vec!["Start daemon", "Check status"]
+    };
     let action = Select::new("Action:", actions).prompt()?;
 
     match action {
@@ -570,20 +579,58 @@ async fn cmd_daemon() -> anyhow::Result<()> {
                 .prompt()?;
             let port: u16 = port_str.trim().parse().unwrap_or(7422);
 
-            println!();
-            println!(
-                "  {} Starting daemon on {}:{}",
-                dim!("→"),
-                bold!(host.clone()),
-                bold!(port.to_string())
-            );
-            println!("  {}", dim!("Daemon not yet wired — see todo/v2.md Area 7."));
+            match crate::daemon::start(&host, port).await {
+                Ok(()) => {
+                    println!(
+                        "\n  {} Daemon started on {}",
+                        green!("✓"),
+                        bold!(format!("{host}:{port}"))
+                    );
+                    println!("  {}", dim!("HTTP + WS server is now running in the background."));
+                    println!("  {}", dim!(format!("Try: curl http://{host}:{port}/health")));
+                }
+                Err(e) => {
+                    println!("\n  {} {}", yellow!("!"), yellow!(format!("Failed to start: {e}")));
+                }
+            }
         }
         "Stop daemon" => {
-            println!("\n  {}", dim!("Daemon not running (or not yet wired)."));
+            match crate::daemon::stop().await {
+                Ok(()) => println!("\n  {} Daemon stopped.", green!("✓")),
+                Err(e) => println!("\n  {} {}", yellow!("!"), yellow!(format!("{e}"))),
+            }
+        }
+        "Restart daemon" => {
+            let _ = crate::daemon::stop().await;
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+            let host = Text::new("Bind host:")
+                .with_default("127.0.0.1")
+                .prompt()?;
+            let port_str = Text::new("Port:")
+                .with_default("7422")
+                .prompt()?;
+            let port: u16 = port_str.trim().parse().unwrap_or(7422);
+
+            match crate::daemon::start(&host, port).await {
+                Ok(()) => {
+                    println!(
+                        "\n  {} Daemon restarted on {}",
+                        green!("✓"),
+                        bold!(format!("{host}:{port}"))
+                    );
+                }
+                Err(e) => {
+                    println!("\n  {} {}", yellow!("!"), yellow!(format!("Failed to restart: {e}")));
+                }
+            }
         }
         "Check status" => {
-            println!("\n  {} {}", dim!("status:"), dim!("daemon not running"));
+            if crate::daemon::is_running().await {
+                println!("\n  {} {}", dim!("status:"), green!("daemon is running"));
+            } else {
+                println!("\n  {} {}", dim!("status:"), dim!("daemon is not running"));
+            }
         }
         _ => {}
     }

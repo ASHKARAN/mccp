@@ -1,101 +1,68 @@
-use std::time::Duration;
-use tokio::signal;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::info;
-use tracing_subscriber::fmt;
 
-/// Start the MCCP daemon
-pub fn start_daemon(port: Option<u16>, host: Option<String>, no_wait: bool) -> anyhow::Result<()> {
-    // Initialize tracing
-    fmt::init();
-    
-    info!("Starting MCCP daemon");
-    
-    // Create runtime
-    let rt = tokio::runtime::Runtime::new()?;
-    
-    rt.block_on(async {
-        // Start the daemon
-        let mut daemon = Daemon::new(port, host)?;
-        daemon.start().await?;
-        
-        info!("MCCP daemon started successfully");
-        
-        if !no_wait {
-            info!("Press Ctrl+C to stop the daemon");
-            
-            // Wait for interrupt signal
-            signal::ctrl_c().await?;
-            info!("Shutting down...");
+/// Handle to a running MCCP daemon (HTTP + WS server).
+pub struct DaemonHandle {
+    shutdown_tx: tokio::sync::oneshot::Sender<()>,
+    join: tokio::task::JoinHandle<()>,
+}
+
+/// Global daemon state — at most one running at a time.
+static DAEMON: std::sync::OnceLock<Arc<Mutex<Option<DaemonHandle>>>> = std::sync::OnceLock::new();
+
+fn daemon_slot() -> &'static Arc<Mutex<Option<DaemonHandle>>> {
+    DAEMON.get_or_init(|| Arc::new(Mutex::new(None)))
+}
+
+/// Start the daemon (HTTP + WS).  Returns immediately; server runs in background.
+pub async fn start(host: &str, port: u16) -> anyhow::Result<()> {
+    let slot = daemon_slot();
+    let mut guard = slot.lock().await;
+
+    if guard.is_some() {
+        anyhow::bail!("daemon already running — stop it first");
+    }
+
+    let config = mccp_core::Config::load_or_default()?;
+    let state = mccp_server::AppState::init(config).await?;
+
+    let addr = format!("{host}:{port}");
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+    let bind_addr = addr.clone();
+    let join = tokio::spawn(async move {
+        if let Err(e) = mccp_server::run_http_with_shutdown(state, &bind_addr, shutdown_rx).await {
+            tracing::error!("daemon error: {e}");
         }
-        
-        daemon.stop().await?;
-        info!("MCCP daemon stopped");
-        
-        Ok(())
-    })
+        info!("daemon stopped");
+    });
+
+    *guard = Some(DaemonHandle { shutdown_tx, join });
+    Ok(())
 }
 
-/// MCCP daemon
-struct Daemon {
-    port: u16,
-    host: String,
-    running: bool,
+/// Stop the running daemon.
+pub async fn stop() -> anyhow::Result<()> {
+    let slot = daemon_slot();
+    let mut guard = slot.lock().await;
+
+    match guard.take() {
+        Some(h) => {
+            let _ = h.shutdown_tx.send(());
+            let _ = h.join.await;
+            info!("daemon stopped");
+            Ok(())
+        }
+        None => {
+            anyhow::bail!("daemon is not running");
+        }
+    }
 }
 
-impl Daemon {
-    /// Create a new daemon
-    fn new(port: Option<u16>, host: Option<String>) -> anyhow::Result<Self> {
-        let port = port.unwrap_or(3000);
-        let host = host.unwrap_or_else(|| "127.0.0.1".to_string());
-        
-        Ok(Self {
-            port,
-            host,
-            running: false,
-        })
-    }
-    
-    /// Start the daemon
-    async fn start(&mut self) -> anyhow::Result<()> {
-        self.running = true;
-        
-        // TODO: Implement actual daemon startup
-        // For now, just log that we're "running"
-        info!("Daemon listening on {}:{}", self.host, self.port);
-        
-        // Start background tasks
-        self.start_background_tasks().await?;
-        
-        Ok(())
-    }
-    
-    /// Stop the daemon
-    async fn stop(&mut self) -> anyhow::Result<()> {
-        self.running = false;
-        
-        // TODO: Implement actual daemon shutdown
-        info!("Daemon stopping...");
-        
-        Ok(())
-    }
-    
-    /// Start background tasks
-    async fn start_background_tasks(&self) -> anyhow::Result<()> {
-        // TODO: Implement background tasks
-        // For now, just spawn a dummy task that runs indefinitely
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(60));
-            
-            loop {
-                interval.tick().await;
-                
-                if false {
-                    // TODO: Implement actual health checks
-                    info!("Daemon health check");
-                }
-            }
-        });
-        
-        Ok(())
-    }
+/// Check if the daemon is currently running.
+pub async fn is_running() -> bool {
+    let slot = daemon_slot();
+    let guard = slot.lock().await;
+    guard.is_some()
 }

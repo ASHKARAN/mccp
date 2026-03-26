@@ -113,6 +113,10 @@ ratatui = "0.28"
 # Interactive prompts
 inquire = "0.7"
 
+# MCCP crates
+mccp-core = { path = "crates/mccp-core" }
+mccp-server = { path = "crates/mccp-server" }
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.8"

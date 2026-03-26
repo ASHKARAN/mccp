@@ -407,14 +407,13 @@ async fn push_log(state: &AppState, level: &str, target: &str, message: impl ToS
     broadcast(state, "logs.line", line).await;
 }
 
-/// Run HTTP server
-pub async fn run_http(state: AppState, addr: &str) -> anyhow::Result<()> {
-    *state.http_addr.write().await = Some(addr.to_string());
-
+/// Build the full HTTP + WS router (without binding).
+/// Useful for embedding in custom servers or tests.
+pub fn build_router(state: AppState) -> Router {
     // Spawn background cache warming
     tokio::spawn(warm_cache(state.clone()));
 
-    let app = Router::new()
+    Router::new()
         .route("/health", get(health))
         .route("/ws", get(ws_upgrade))
 
@@ -460,11 +459,36 @@ pub async fn run_http(state: AppState, addr: &str) -> anyhow::Result<()> {
         .route("/v1/code_intel/refresh", post(code_intel_refresh))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(CorsLayer::permissive())
-        .with_state(state);
+        .with_state(state)
+}
+
+/// Run HTTP server
+pub async fn run_http(state: AppState, addr: &str) -> anyhow::Result<()> {
+    *state.http_addr.write().await = Some(addr.to_string());
+
+    let app = build_router(state);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("HTTP server listening on {}", addr);
     axum::serve(listener, app).await?;
+    Ok(())
+}
+
+/// Run HTTP server with a graceful shutdown signal.
+pub async fn run_http_with_shutdown(
+    state: AppState,
+    addr: &str,
+    shutdown: tokio::sync::oneshot::Receiver<()>,
+) -> anyhow::Result<()> {
+    *state.http_addr.write().await = Some(addr.to_string());
+
+    let app = build_router(state);
+
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    tracing::info!("HTTP server listening on {}", addr);
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async { let _ = shutdown.await; })
+        .await?;
     Ok(())
 }
 
