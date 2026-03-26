@@ -2671,6 +2671,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "mccp-core",
+ "regex",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

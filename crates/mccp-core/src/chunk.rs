@@ -95,6 +95,7 @@ impl Chunk {
 }
 
 /// Chunker for splitting source files into chunks
+#[derive(Clone)]
 pub struct Chunker {
     config: ChunkConfig,
 }

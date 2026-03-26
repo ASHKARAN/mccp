@@ -122,7 +122,7 @@ pub struct SummaryStats {
 
 /// LLM provider trait for generating summaries
 #[async_trait::async_trait]
-pub trait LlmProvider: Send + Sync {
+pub trait LlmProvider: Send + Sync + std::fmt::Debug {
     /// Generate text completion
     async fn complete(&self, prompt: &str, schema: Option<&JsonSchema>) -> Result<String>;
     

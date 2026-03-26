@@ -1,5 +1,7 @@
 use super::*;
 use mccp_core::*;
+use std::path::PathBuf;
+use sha2::Digest as _;
 
 /// Parser for extracting symbols from source files
 #[derive(Debug, Clone)]

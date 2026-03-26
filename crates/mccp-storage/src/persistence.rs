@@ -1,4 +1,6 @@
 use super::*;
+use mccp_core::*;
+use std::collections::HashMap;
 use std::path::Path;
 use std::fs;
 use serde::{Deserialize, Serialize};
@@ -20,17 +22,13 @@ impl Persistence {
             symbols: self.export_symbols(storage).await?,
             chunks: self.export_chunks(storage).await?,
             summaries: self.export_summaries(storage).await?,
-            graphs: self.export_graphs(storage).await?,
         };
 
         let json = serde_json::to_string_pretty(&backup_data)
-            .map_err(|e| Error::SerializationError(e.to_string()))?;
+            .map_err(|e| Error::ParseError(e.to_string()))?;
 
         fs::write(path, json)
-            .map_err(|e| Error::FileWriteError {
-                path: path.to_string(),
-                error: e.to_string(),
-            })?;
+            .map_err(|e| Error::IoError(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
 
         Ok(())
     }
@@ -38,19 +36,15 @@ impl Persistence {
     /// Restore storage from a backup file
     pub async fn restore(&self, storage: &StorageBackend, path: &str) -> Result<()> {
         let content = fs::read_to_string(path)
-            .map_err(|e| Error::FileReadError {
-                path: path.to_string(),
-                error: e.to_string(),
-            })?;
+            .map_err(|e| Error::IoError(e))?;
 
         let backup_data: BackupData = serde_json::from_str(&content)
-            .map_err(|e| Error::DeserializationError(e.to_string()))?;
+            .map_err(|e| Error::ParseError(e.to_string()))?;
 
         self.import_projects(storage, backup_data.projects).await?;
         self.import_symbols(storage, backup_data.symbols).await?;
         self.import_chunks(storage, backup_data.chunks).await?;
         self.import_summaries(storage, backup_data.summaries).await?;
-        self.import_graphs(storage, backup_data.graphs).await?;
 
         Ok(())
     }
@@ -66,7 +60,7 @@ impl Persistence {
         let mut symbols_map = HashMap::new();
 
         for project in projects {
-            if let Ok(symbols) = storage.get_symbols(&project.id.as_str()) {
+            if let Ok(symbols) = storage.get_symbols(project.id.as_str()).await {
                 symbols_map.insert(project.id.as_str().to_string(), symbols);
             }
         }
@@ -80,7 +74,7 @@ impl Persistence {
         let mut chunks_map = HashMap::new();
 
         for project in projects {
-            if let Ok(chunks) = storage.get_chunks(&project.id.as_str()) {
+            if let Ok(chunks) = storage.get_chunks(project.id.as_str()).await {
                 chunks_map.insert(project.id.as_str().to_string(), chunks);
             }
         }
@@ -94,26 +88,12 @@ impl Persistence {
         let mut summaries_map = HashMap::new();
 
         for project in projects {
-            if let Ok(summaries) = storage.get_summaries(&project.id.as_str()) {
+            if let Ok(summaries) = storage.get_summaries(project.id.as_str()).await {
                 summaries_map.insert(project.id.as_str().to_string(), summaries);
             }
         }
 
         Ok(summaries_map)
-    }
-
-    /// Export graphs to backup format
-    async fn export_graphs(&self, storage: &StorageBackend) -> Result<HashMap<String, GraphStore>> {
-        let projects = storage.list_projects().await?;
-        let mut graphs_map = HashMap::new();
-
-        for project in projects {
-            if let Ok(graph) = storage.get_graph(&project.id.as_str()) {
-                graphs_map.insert(project.id.as_str().to_string(), graph);
-            }
-        }
-
-        Ok(graphs_map)
     }
 
     /// Import projects from backup format
@@ -148,14 +128,6 @@ impl Persistence {
         Ok(())
     }
 
-    /// Import graphs from backup format
-    async fn import_graphs(&self, storage: &StorageBackend, graphs_map: HashMap<String, GraphStore>) -> Result<()> {
-        for (project_id, graph) in graphs_map {
-            storage.set_graph(&project_id, graph).await?;
-        }
-        Ok(())
-    }
-
     /// Check if a backup file exists
     pub fn backup_exists(path: &str) -> bool {
         Path::new(path).exists()
@@ -164,10 +136,7 @@ impl Persistence {
     /// Get backup file size
     pub fn backup_size(path: &str) -> Result<u64> {
         let metadata = fs::metadata(path)
-            .map_err(|e| Error::FileReadError {
-                path: path.to_string(),
-                error: e.to_string(),
-            })?;
+            .map_err(|e| Error::IoError(e))?;
         
         Ok(metadata.len())
     }
@@ -180,7 +149,6 @@ struct BackupData {
     symbols: HashMap<String, Vec<Symbol>>,
     chunks: HashMap<String, Vec<Chunk>>,
     summaries: HashMap<String, Vec<Summary>>,
-    graphs: HashMap<String, GraphStore>,
 }
 
 #[cfg(test)]

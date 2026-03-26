@@ -95,26 +95,23 @@ impl Chunker {
     /// Apply overlap between adjacent chunks
     fn apply_overlap(&self, chunks: &mut Vec<Chunk>) {
         for i in 1..chunks.len() {
-            let prev = &chunks[i - 1];
+            let overlap_content = {
+                let prev = &chunks[i - 1];
+                let overlap_needed = self.config.overlap_tokens;
+                if overlap_needed == 0 {
+                    continue;
+                }
+                prev.content
+                    .split_whitespace()
+                    .rev()
+                    .take(overlap_needed)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
             let curr = &mut chunks[i];
-            
-            // Calculate overlap needed
-            let overlap_needed = self.config.overlap_tokens;
-            if overlap_needed == 0 {
-                continue;
-            }
-            
-            // Simple overlap by extending content backwards
-            let overlap_content = prev.content
-                .split_whitespace()
-                .rev()
-                .take(overlap_needed)
-                .collect::<Vec<_>>()
-                .into_iter()
-                .rev()
-                .collect::<Vec<_>>()
-                .join(" ");
-            
             curr.content = format!("{} {}", overlap_content, curr.content);
             curr.start_byte = curr.start_byte.saturating_sub(overlap_content.len());
         }
@@ -298,7 +295,7 @@ impl Chunker {
                 content,
                 raw.start_byte, raw.end_byte,
                 raw.start_line, raw.end_line,
-                ChunkScope::Method,
+                ChunkScope::Method(String::new()),
             ));
         }
         out
