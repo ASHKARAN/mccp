@@ -616,6 +616,126 @@ impl Command for ConfigCommand {
     }
 }
 
+/// Logs command
+#[derive(clap::Args)]
+pub struct LogsCommand {
+    /// Optional path to a log file (defaults to ~/.mccp/logs/mccp.log)
+    #[arg(long)]
+    pub path: Option<PathBuf>,
+
+    /// Number of lines to show
+    #[arg(short = 'n', long, default_value_t = 200)]
+    pub lines: usize,
+
+    /// Follow (tail -f)
+    #[arg(short = 'f', long)]
+    pub follow: bool,
+
+    /// Filter by level (TRACE|DEBUG|INFO|WARN|ERROR)
+    #[arg(long)]
+    pub level: Option<String>,
+
+    /// Substring filter
+    #[arg(long)]
+    pub contains: Option<String>,
+}
+
+#[async_trait::async_trait]
+impl Command for LogsCommand {
+    async fn execute(&self, _config: &CliConfig) -> anyhow::Result<()> {
+        use std::io::{Read, Seek, SeekFrom};
+
+        fn expand_tilde(p: &std::path::Path) -> std::path::PathBuf {
+            let s = p.to_string_lossy();
+            if let Some(rest) = s.strip_prefix("~/") {
+                if let Some(home) = std::env::var_os("HOME") {
+                    return std::path::PathBuf::from(home).join(rest);
+                }
+            }
+            p.to_path_buf()
+        }
+
+        let log_path = if let Some(p) = &self.path {
+            p.clone()
+        } else {
+            let core_cfg = mccp_core::Config::load_or_default()?;
+            let dir = expand_tilde(&core_cfg.daemon.log_dir);
+            dir.join("mccp.log")
+        };
+
+        if !log_path.exists() {
+            println!(
+                "{} {}\n{}",
+                "Log file not found:".yellow().bold(),
+                log_path.display().to_string().bold(),
+                "Tip: run the server and ensure it writes logs to ~/.mccp/logs/mccp.log".yellow()
+            );
+            return Ok(());
+        }
+
+        let level = self.level.as_ref().map(|s| s.to_uppercase());
+        let contains = self.contains.as_ref().map(|s| s.to_lowercase());
+        let matches = |line: &str| {
+            if let Some(lvl) = &level {
+                if !line.contains(lvl) {
+                    return false;
+                }
+            }
+            if let Some(sub) = &contains {
+                if !line.to_lowercase().contains(sub) {
+                    return false;
+                }
+            }
+            true
+        };
+
+        // Print last N lines
+        let content = std::fs::read_to_string(&log_path).unwrap_or_default();
+        let all_lines: Vec<&str> = content.lines().collect();
+        let start = all_lines.len().saturating_sub(self.lines);
+        for line in &all_lines[start..] {
+            if matches(line) {
+                println!("{}", line);
+            }
+        }
+
+        if !self.follow {
+            return Ok(());
+        }
+
+        println!("{} {} (Ctrl+C to stop)", "Following".green().bold(), log_path.display());
+
+        let mut f = std::fs::File::open(&log_path)?;
+        let mut offset = f.metadata()?.len();
+
+        loop {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => break,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                    let new_len = f.metadata()?.len();
+                    if new_len < offset {
+                        // Log rotated/truncated
+                        offset = 0;
+                    }
+                    if new_len > offset {
+                        f.seek(SeekFrom::Start(offset))?;
+                        let mut buf = String::new();
+                        f.read_to_string(&mut buf)?;
+                        offset = new_len;
+                        for line in buf.lines() {
+                            if matches(line) {
+                                println!("{}", line);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Test command
 #[derive(clap::Args)]
 pub struct TestCommand {

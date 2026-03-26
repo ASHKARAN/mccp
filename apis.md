@@ -361,6 +361,53 @@ When sent:
 
 ---
 
+## Logs APIs
+
+### REST: `GET /api/v1/logs`
+**Purpose:** fetch historical logs for the Logs page, with server-side filtering/pagination.
+
+**Query params**
+- `level` (optional): `TRACE|DEBUG|INFO|WARN|ERROR`
+- `q` (optional): substring match against message/target/span
+- `target` (optional): prefix or exact match (e.g., `mccp_server`)
+- `since` (optional): RFC3339 timestamp (return logs at/after)
+- `until` (optional): RFC3339 timestamp
+- `limit` (optional, default 500, max 5000)
+- `cursor` (optional): opaque cursor for pagination
+
+**Response**
+```json
+{
+  "items": [
+    {
+      "id": "log_...",
+      "ts": "2026-03-26T11:26:59Z",
+      "level": "INFO",
+      "target": "mccp_server",
+      "span": "request",
+      "message": "HTTP server listening on 127.0.0.1:7422"
+    }
+  ],
+  "next_cursor": "..."
+}
+```
+
+**Side effects:** none.
+
+### WS events
+
+#### `logs.snapshot`
+Payload: `LogLine[]` (recent N lines). Sent immediately on connect.
+
+#### `logs.line`
+Payload: `LogLine`. Sent for every new log line.
+
+Recommended behavior:
+- Keep an in-memory ring buffer (e.g., last 2k–10k lines).
+- Also persist to disk for history used by REST `GET /api/v1/logs`.
+
+---
+
 ## Why WS + REST?
 - REST is used for **commands** (create project, reindex, cancel task, apply config).
 - WS is used for **status** (metrics, uptime, progress, live task updates).

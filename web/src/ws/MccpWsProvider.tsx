@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { getWsUrl } from '../api/runtimeConfig';
 import type { IndexProgress } from '../api/mccp';
-import type { ProjectInfo, SystemMetrics, SystemStatus, TaskInfo, WsEnvelope, WsStatus } from './types';
+import type { LogLine, ProjectInfo, SystemMetrics, SystemStatus, TaskInfo, WsEnvelope, WsStatus } from './types';
 
 type WsState = {
   status: WsStatus;
@@ -11,6 +11,7 @@ type WsState = {
   indexProgress: IndexProgress | null;
   tasks: TaskInfo[];
   projects: ProjectInfo[];
+  logs: import('./types').LogLine[];
   reconnect: () => void;
 };
 
@@ -25,6 +26,7 @@ export function MccpWsProvider({ children }: { children: React.ReactNode }) {
   const [indexProgress, setIndexProgress] = useState<IndexProgress | null>(null);
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
+  const [logs, setLogs] = useState<import('./types').LogLine[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
   const connectRef = useRef<() => void>(() => {});
@@ -101,6 +103,19 @@ export function MccpWsProvider({ children }: { children: React.ReactNode }) {
         });
         return;
       }
+      case 'logs.line': {
+        const line = env.data as LogLine;
+        setLogs((prev) => {
+          const next = [line, ...prev];
+          return next.slice(0, 2000);
+        });
+        return;
+      }
+      case 'logs.snapshot': {
+        const lines = (env.data as LogLine[]) || [];
+        setLogs(lines.slice(0, 2000));
+        return;
+      }
       default:
         return;
     }
@@ -129,7 +144,7 @@ export function MccpWsProvider({ children }: { children: React.ReactNode }) {
       ws.send(
         JSON.stringify({
           type: 'subscribe',
-          topics: ['system', 'metrics', 'index', 'tasks', 'projects'],
+          topics: ['system', 'metrics', 'index', 'tasks', 'projects', 'logs'],
         })
       );
     };
@@ -178,6 +193,7 @@ export function MccpWsProvider({ children }: { children: React.ReactNode }) {
       indexProgress,
       tasks,
       projects,
+      logs,
       reconnect,
     }),
     [
@@ -188,6 +204,7 @@ export function MccpWsProvider({ children }: { children: React.ReactNode }) {
       indexProgress,
       tasks,
       projects,
+      logs,
       reconnect,
     ]
   );

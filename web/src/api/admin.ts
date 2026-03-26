@@ -14,6 +14,16 @@ export const admin = {
   getConfig: () => fetchJson<ConfigGetResponse>('/api/v1/config'),
   putConfig: (toml: string) => fetchJson<{ ok: boolean; restart_required?: boolean }>('/api/v1/config', { method: 'PUT', body: { toml } }),
 
+  listLogs: (params: { level?: string; q?: string; target?: string; since?: string; until?: string; limit?: number; cursor?: string } = {}) => {
+    const usp = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v === undefined || v === null || v === '') continue;
+      usp.set(k, String(v));
+    }
+    const qs = usp.toString();
+    return fetchJson<{ items: import('../ws/types').LogLine[]; next_cursor?: string }>(`/api/v1/logs${qs ? `?${qs}` : ''}`);
+  },
+
   listProjects: () => fetchJson<ProjectInfo[]>('/api/v1/projects'),
   createProject: (req: { name: string; root_path: string; watch?: boolean; index_immediately?: boolean }) =>
     fetchJson<{ id: string }>('/api/v1/projects', { method: 'POST', body: req }),

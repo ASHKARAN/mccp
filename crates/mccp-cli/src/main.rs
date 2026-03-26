@@ -57,6 +57,9 @@ enum Commands {
     /// Configure the system
     Config(ConfigCommand),
     
+    /// View MCCP logs
+    Logs(LogsCommand),
+
     /// Test the system
     Test(TestCommand),
 }
@@ -92,6 +95,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Provider(cmd) => cmd.execute(&config).await,
         Commands::Stats(cmd) => cmd.execute(&config).await,
         Commands::Config(cmd) => cmd.execute(&config).await,
+        Commands::Logs(cmd) => cmd.execute(&config).await,
         Commands::Test(cmd) => cmd.execute(&config).await,
     }
 }

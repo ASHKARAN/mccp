@@ -45,3 +45,14 @@ export type ProjectInfo = {
   file_count?: number;
   chunk_count?: number;
 };
+
+export type LogLevel = 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
+
+export type LogLine = {
+  id: string;
+  ts: string; // RFC3339
+  level: LogLevel;
+  target?: string;
+  span?: string;
+  message: string;
+};

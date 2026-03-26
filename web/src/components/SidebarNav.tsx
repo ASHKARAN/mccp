@@ -38,6 +38,7 @@ export function SidebarNav() {
         <NavItem to="/dashboard" label="Dashboard" />
         <NavItem to="/projects" label="Projects" />
         <NavItem to="/tasks" label="Tasks" />
+        <NavItem to="/logs" label="Logs" />
         <NavItem to="/config" label="Config" />
       </Stack>
     </Box>

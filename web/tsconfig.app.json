@@ -13,7 +13,9 @@
     "jsx": "react-jsx",
 
     "strict": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+
+    "tsBuildInfoFile": "./node_modules/.cache/tsconfig.app.tsbuildinfo"
   },
   "include": ["src"]
 }

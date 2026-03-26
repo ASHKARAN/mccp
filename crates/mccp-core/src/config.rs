@@ -21,6 +21,7 @@ pub struct WebhookConfig {
 
 /// Configuration for the mccp system
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     pub daemon: DaemonConfig,
     pub indexer: IndexerConfig,
@@ -121,8 +122,27 @@ impl Config {
     }
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            daemon: DaemonConfig::default(),
+            indexer: IndexerConfig::default(),
+            embedding: EmbeddingConfig::default(),
+            llm: LlmConfig::default(),
+            vector: VectorConfig::default(),
+            query: QueryConfig::default(),
+            storage: StorageConfig::default(),
+            docker: DockerConfig::default(),
+            logging: LoggingConfig::default(),
+            agents: vec![],
+            webhook: None,
+        }
+    }
+}
+
 /// Daemon configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DaemonConfig {
     pub http_port: u16,
     pub log_level: String,
@@ -145,6 +165,7 @@ impl Default for DaemonConfig {
 
 /// Indexer configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct IndexerConfig {
     pub watch_enabled: bool,
     pub max_chunk_tokens: usize,
@@ -177,6 +198,7 @@ impl Default for IndexerConfig {
 
 /// Embedding provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct EmbeddingConfig {
     pub providers: Vec<EmbeddingProviderConfig>,
     pub dimensions: usize,
@@ -204,6 +226,7 @@ impl Default for EmbeddingConfig {
 
 /// LLM provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LlmConfig {
     pub providers: Vec<LlmProviderConfig>,
     pub max_tokens: usize,
@@ -231,6 +254,7 @@ impl Default for LlmConfig {
 
 /// Vector store configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct VectorConfig {
     pub driver: String,
     pub url: String,
@@ -259,6 +283,7 @@ impl Default for VectorConfig {
 
 /// Query engine configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct QueryConfig {
     pub default_top_k: usize,
     pub cache_size_entries: usize,
@@ -279,6 +304,7 @@ impl Default for QueryConfig {
 
 /// Storage configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct StorageConfig {
     pub data_dir: PathBuf,
     pub metadata_backend: String,
@@ -297,6 +323,7 @@ impl Default for StorageConfig {
 
 /// Docker configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct DockerConfig {
     pub compose_file: PathBuf,
     pub auto_start: bool,
@@ -315,6 +342,7 @@ impl Default for DockerConfig {
 
 /// Logging configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LoggingConfig {
     pub level: String,
     pub format: String,
@@ -341,6 +369,7 @@ pub struct EmbeddingProviderConfig {
     pub driver: String,
     pub model: String,
     pub url: String,
+    #[serde(default)]
     pub api_key: String,
 }
 
@@ -350,6 +379,7 @@ pub struct LlmProviderConfig {
     pub driver: String,
     pub model: String,
     pub url: String,
+    #[serde(default)]
     pub api_key: String,
 }
 
