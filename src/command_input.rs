@@ -4,7 +4,8 @@ use inquire::{Confirm, InquireError, Select, Text};
 use inquire::autocompletion::{Autocomplete, Replacement};
 use inquire::CustomUserError;
 use std::env;
-use std::path::PathBuf;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 
 // ─── ANSI helpers ────────────────────────────────────────────────────────────
 
@@ -22,6 +23,7 @@ const COMMANDS: &[(&str, &str)] = &[
     ("/projects", "List and manage projects"),
     ("/daemon",   "Start / stop the MCCP daemon"),
     ("/config",   "Configure providers & vector store"),
+    ("/logs",     "Show and filter app logs"),
     ("/help",     "Show help and documentation"),
     ("/quit",     "Exit mccp"),
 ];
@@ -161,6 +163,7 @@ async fn dispatch(cmd: &str) -> anyhow::Result<bool> {
         "/projects" => { cmd_projects().await?; Ok(false) }
         "/daemon"   => { cmd_daemon().await?;   Ok(false) }
         "/config"   => { cmd_config().await?;  Ok(false) }
+        "/logs"     => { cmd_logs().await?;    Ok(false) }
         "/help"     => { cmd_help();            Ok(false) }
         "/quit" | "/exit" | "quit" | "exit" | "q" => Ok(true),
         "" => Ok(false),
@@ -583,6 +586,134 @@ async fn cmd_daemon() -> anyhow::Result<()> {
             println!("\n  {} {}", dim!("status:"), dim!("daemon not running"));
         }
         _ => {}
+    }
+
+    println!();
+    Ok(())
+}
+
+// ─── /logs ────────────────────────────────────────────────────────────────────
+
+async fn cmd_logs() -> anyhow::Result<()> {
+    println!("\n  {}", bold!(cyan!("Logs")));
+    println!();
+
+    fn expand_tilde(p: &Path) -> PathBuf {
+        let s = p.to_string_lossy();
+        if let Some(rest) = s.strip_prefix("~/") {
+            if let Some(home) = std::env::var_os("HOME") {
+                return PathBuf::from(home).join(rest);
+            }
+        }
+        p.to_path_buf()
+    }
+
+    let default_log_path = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".mccp")
+        .join("logs")
+        .join("mccp.log");
+
+    let path_str = Text::new("Log file path:")
+        .with_default(&default_log_path.display().to_string())
+        .prompt()?;
+    let log_path = expand_tilde(Path::new(&path_str));
+
+    if !log_path.exists() {
+        println!(
+            "  {} {}\n  {}",
+            yellow!("!"),
+            yellow!(format!("Log file not found: {}", log_path.display())),
+            dim!("Tip: run mccp-server once to create ~/.mccp/logs/mccp.log")
+        );
+        println!();
+        return Ok(());
+    }
+
+    let n_str = Text::new("Show last N lines:")
+        .with_default("200")
+        .prompt()?;
+    let n: usize = n_str.trim().parse().unwrap_or(200);
+
+    let lvl = Select::new(
+        "Level filter:",
+        vec!["(all)", "TRACE", "DEBUG", "INFO", "WARN", "ERROR"],
+    )
+    .prompt()?;
+    let level = if lvl == "(all)" { None } else { Some(lvl.to_string()) };
+
+    let contains_raw = Text::new("Contains filter (optional):")
+        .with_default("")
+        .prompt()?;
+    let contains = if contains_raw.trim().is_empty() {
+        None
+    } else {
+        Some(contains_raw.to_lowercase())
+    };
+
+    let follow = Confirm::new("Follow (live updates)?")
+        .with_default(true)
+        .prompt()?;
+
+    let matches = |line: &str| {
+        if let Some(lvl) = &level {
+            if !line.contains(lvl) {
+                return false;
+            }
+        }
+        if let Some(sub) = &contains {
+            if !line.to_lowercase().contains(sub) {
+                return false;
+            }
+        }
+        true
+    };
+
+    let content = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let all_lines: Vec<&str> = content.lines().collect();
+    let start = all_lines.len().saturating_sub(n);
+    for line in &all_lines[start..] {
+        if matches(line) {
+            println!("{}", line);
+        }
+    }
+
+    if !follow {
+        println!();
+        return Ok(());
+    }
+
+    println!();
+    println!(
+        "  {} {} (Ctrl+C to stop)",
+        green!("✓"),
+        dim!(format!("following {}", log_path.display()))
+    );
+
+    let mut f = std::fs::File::open(&log_path)?;
+    let mut offset = f.metadata()?.len();
+
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => break,
+            _ = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                let new_len = f.metadata()?.len();
+                if new_len < offset {
+                    offset = 0;
+                }
+                if new_len > offset {
+                    f.seek(SeekFrom::Start(offset))?;
+                    let mut buf = String::new();
+                    f.read_to_string(&mut buf)?;
+                    offset = new_len;
+                    for line in buf.lines() {
+                        if matches(line) {
+                            println!("{}", line);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     println!();

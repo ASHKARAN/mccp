@@ -150,18 +150,21 @@ impl IndexingPipeline {
     /// Index existing files in the project
     async fn index_existing_files(&self) -> Result<()> {
         let files = self.walk_project_files();
-        
-        for file_path in files {
+        let total = files.len();
+
+        self.emit_progress("chunking", 0, total, 0);
+
+        for (i, file_path) in files.into_iter().enumerate() {
             let relative_path = self.project.relative_path(&file_path)
                 .ok_or_else(|| Error::FileReadError {
                     path: file_path.to_string_lossy().to_string(),
                     error: "Could not get relative path".to_string(),
                 })?;
-            
+
             // Check if file has changed
             if let Ok(source_file) = SourceFile::from_path(&file_path) {
                 let cached_hash = self.file_hash_cache.get(&relative_path);
-                
+
                 if cached_hash.map_or(true, |h| h.value() != &source_file.hash) {
                     // File has changed, queue for indexing
                     let job = IndexJob {
@@ -171,16 +174,25 @@ impl IndexingPipeline {
                         language: source_file.language,
                         hash: source_file.hash.clone(),
                     };
-                    
-                    self.processing_queue.send(job)
+
+                    self.processing_queue
+                        .send(job)
                         .map_err(|_| Error::IndexError("Failed to queue job".to_string()))?;
-                    
+
                     // Update cache
                     self.file_hash_cache.insert(relative_path, source_file.hash);
                 }
             }
+
+            let current = i + 1;
+            let percentage = if total == 0 { 100 } else { ((current * 100) / total).min(100) as u8 };
+            self.emit_progress("chunking", current, total, percentage);
         }
-        
+
+        if total == 0 {
+            self.emit_progress("chunking", 0, 0, 100);
+        }
+
         Ok(())
     }
 
