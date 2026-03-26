@@ -63,25 +63,23 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Initialize tracing
-    tracing_subscriber::init();
-    
+    // Set up logging based on verbosity — must happen before subscriber init
     let cli = Cli::parse();
     
-    // Load configuration
-    let config = match &cli.config {
-        Some(config_path) => CliConfig::load(config_path)?,
-        None => CliConfig::default(),
-    };
-    
-    // Set up logging based on verbosity
     if cli.verbose {
         std::env::set_var("RUST_LOG", "mccp_cli=debug,mccp_core=debug");
     } else {
         std::env::set_var("RUST_LOG", "mccp_cli=info,mccp_core=info");
     }
     
-    tracing_subscriber::init();
+    // Initialize tracing
+    tracing_subscriber::fmt::init();
+    
+    // Load configuration
+    let config = match &cli.config {
+        Some(config_path) => CliConfig::load(config_path)?,
+        None => CliConfig::default(),
+    };
     
     // Execute command
     match cli.command {

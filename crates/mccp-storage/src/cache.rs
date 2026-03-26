@@ -36,17 +36,22 @@ impl Cache {
 
     /// Get a value from cache
     pub fn get(&self, key: &str) -> Option<String> {
-        if let Some(entry) = self.entries.get(key) {
+        let expired = if let Some(entry) = self.entries.get(key) {
             if let Some(expires_at) = entry.expires_at {
-                if Instant::now() > expires_at {
-                    self.entries.remove(key);
-                    return None;
-                }
+                Instant::now() > expires_at
+            } else {
+                false
             }
-            Some(entry.value.clone())
         } else {
-            None
+            return None;
+        };
+
+        if expired {
+            self.entries.remove(key);
+            return None;
         }
+
+        self.entries.get(key).map(|e| e.value.clone())
     }
 
     /// Set a value in cache with default TTL

@@ -22,6 +22,15 @@ pub struct IndexingPipeline {
     pub progress_rx: tokio::sync::watch::Receiver<Option<IndexProgress>>,
 }
 
+impl std::fmt::Debug for IndexingPipeline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IndexingPipeline")
+            .field("project", &self.project)
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
+}
+
 /// A job to index a specific file
 #[derive(Debug, Clone)]
 pub struct IndexJob {
@@ -313,7 +322,7 @@ pub struct IndexProgress {
 }
 
 /// Indexing status
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IndexingStatus {
     pub project_id: String,
     pub file_count: usize,

@@ -169,6 +169,7 @@ mod tests {
         
         // Create test data
         let project = Project::new("test".to_string(), &std::path::PathBuf::from("/tmp"));
+        let project_id = project.id.as_str().to_string();
         storage.set_project(project).await.unwrap();
         
         let symbols = vec![
@@ -185,7 +186,7 @@ mod tests {
                 RefKind::Definition,
             ),
         ];
-        storage.set_symbols("test", symbols).await.unwrap();
+        storage.set_symbols(&project_id, symbols).await.unwrap();
         
         // Create temporary file for backup
         let temp_file = NamedTempFile::new().unwrap();
@@ -202,10 +203,10 @@ mod tests {
         persistence.restore(&new_storage, backup_path).await.unwrap();
         
         // Verify data was restored
-        let restored_project = new_storage.get_project("test").await.unwrap();
+        let restored_project = new_storage.get_project(&project_id).await.unwrap();
         assert_eq!(restored_project.name, "test");
         
-        let restored_symbols = new_storage.get_symbols("test").await.unwrap();
+        let restored_symbols = new_storage.get_symbols(&project_id).await.unwrap();
         assert_eq!(restored_symbols.len(), 1);
         assert_eq!(restored_symbols[0].name, "main");
     }
@@ -238,6 +239,7 @@ mod tests {
         
         // Create test data
         let project = Project::new("test".to_string(), &std::path::PathBuf::from("/tmp"));
+        let project_id = project.id.as_str().to_string();
         storage.set_project(project.clone()).await.unwrap();
         
         // Export projects
@@ -250,7 +252,7 @@ mod tests {
         persistence.import_projects(&new_storage, exported_projects).await.unwrap();
         
         // Verify import
-        let imported_project = new_storage.get_project("test").await.unwrap();
+        let imported_project = new_storage.get_project(&project_id).await.unwrap();
         assert_eq!(imported_project.name, "test");
     }
 }

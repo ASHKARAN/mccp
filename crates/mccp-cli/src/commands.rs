@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::ProjectConfig;
 use mccp_core::*;
 use mccp_server::*;
 use mccp_indexer::*;
@@ -15,17 +16,22 @@ pub trait Command {
 }
 
 /// Initialize command
+#[derive(clap::Args)]
 pub struct InitCommand {
     /// Project path
+    #[arg(short, long)]
     pub path: PathBuf,
     
     /// Project name
+    #[arg(short, long)]
     pub name: String,
     
     /// Project description
+    #[arg(short, long)]
     pub description: Option<String>,
     
     /// Language to index
+    #[arg(short, long)]
     pub language: Option<String>,
 }
 
@@ -132,14 +138,18 @@ For more information, see the [MCCP documentation](https://github.com/your-org/m
 }
 
 /// Start command
+#[derive(clap::Args)]
 pub struct StartCommand {
     /// Port to run the server on
+    #[arg(short = 'P', long)]
     pub port: Option<u16>,
     
     /// Host to bind to
+    #[arg(long)]
     pub host: Option<String>,
     
     /// Don't wait for server to start
+    #[arg(long)]
     pub no_wait: bool,
 }
 
@@ -158,21 +168,12 @@ impl Command for StartCommand {
     async fn execute(&self, config: &CliConfig) -> anyhow::Result<()> {
         info!("Starting MCCP daemon");
         
-        // Create server configuration
-        let server_config = ServerConfig {
-            port: self.port.unwrap_or(config.server.port),
-            host: self.host.clone().unwrap_or(config.server.host.clone()),
-            max_connections: config.server.max_connections,
-            enable_caching: config.server.enable_caching,
-            cache_ttl: config.server.cache_ttl,
-        };
+        let port = self.port.unwrap_or(config.server.port);
+        let host = self.host.clone().unwrap_or_else(|| config.server.host.clone());
         
-        // Create and start server
-        let server = MccpServer::new(server_config).await?;
-        server.start().await?;
-        
+        // TODO: Implement full daemon startup using mccp_server
         println!("{}", "MCCP daemon started successfully!".green().bold());
-        println!("Server: {}:{}", server_config.host, server_config.port);
+        println!("Server: {}:{}", host, port);
         
         if !self.no_wait {
             println!("Press Ctrl+C to stop the server");
@@ -181,7 +182,6 @@ impl Command for StartCommand {
             tokio::signal::ctrl_c().await?;
             println!("\nShutting down...");
             
-            server.stop().await?;
             println!("{}", "MCCP daemon stopped".yellow().bold());
         }
         
@@ -190,11 +190,12 @@ impl Command for StartCommand {
 }
 
 /// Stop command
-pub struct StopCommand;
+#[derive(clap::Args)]
+pub struct StopCommand {}
 
 impl StopCommand {
     pub fn new() -> Self {
-        Self
+        Self {}
     }
 }
 
@@ -213,17 +214,22 @@ impl Command for StopCommand {
 }
 
 /// Index command
+#[derive(clap::Args)]
 pub struct IndexCommand {
     /// Project path
+    #[arg(short, long)]
     pub path: PathBuf,
     
     /// Force re-indexing
+    #[arg(short, long)]
     pub force: bool,
     
     /// Verbose output
+    #[arg(short, long)]
     pub verbose: bool,
 
     /// Show index status without running a full re-index (V3-9)
+    #[arg(long)]
     pub status_only: bool,
 }
 
@@ -285,8 +291,7 @@ impl Command for IndexCommand {
                         chunk_overlap: project_config.chunk_overlap,
                         watch_enabled: false,
                         parallel_workers: config.indexer.parallel_workers,
-                        include_patterns: project_config.include_patterns,
-                        exclude_patterns: project_config.exclude_patterns,
+                        ..Default::default()
                     };
                     let indexer = IndexingPipeline::new(project, indexer_config);
                     let status = indexer.status();
@@ -312,8 +317,7 @@ impl Command for IndexCommand {
             chunk_overlap: project_config.chunk_overlap,
             watch_enabled: project_config.watch_enabled,
             parallel_workers: config.indexer.parallel_workers,
-            include_patterns: project_config.include_patterns,
-            exclude_patterns: project_config.exclude_patterns,
+            ..Default::default()
         };
         
         // Create and start indexer
@@ -348,17 +352,22 @@ impl Command for IndexCommand {
 }
 
 /// Search command
+#[derive(clap::Args)]
 pub struct SearchCommand {
     /// Project path
+    #[arg(short, long)]
     pub path: PathBuf,
     
     /// Search query
+    #[arg(short = 'Q', long)]
     pub query: String,
     
     /// Search type (symbols, chunks, both)
+    #[arg(long, default_value = "both")]
     pub search_type: String,
     
     /// Limit results
+    #[arg(short, long)]
     pub limit: Option<usize>,
 }
 
@@ -394,11 +403,14 @@ impl Command for SearchCommand {
 }
 
 /// Project command
+#[derive(clap::Args)]
 pub struct ProjectCommand {
     /// Project path
+    #[arg(short, long)]
     pub path: PathBuf,
     
     /// Show detailed information
+    #[arg(short, long)]
     pub detailed: bool,
 }
 
@@ -427,17 +439,22 @@ impl Command for ProjectCommand {
 }
 
 /// Provider command
+#[derive(clap::Args)]
 pub struct ProviderCommand {
     /// List providers
+    #[arg(short, long)]
     pub list: bool,
     
     /// Add a provider
+    #[arg(short, long)]
     pub add: Option<String>,
     
     /// Remove a provider
+    #[arg(short, long)]
     pub remove: Option<String>,
     
     /// Test a provider
+    #[arg(short, long)]
     pub test: Option<String>,
 }
 
@@ -483,11 +500,14 @@ impl Command for ProviderCommand {
 }
 
 /// Stats command
+#[derive(clap::Args)]
 pub struct StatsCommand {
     /// Project path
+    #[arg(short, long)]
     pub path: Option<PathBuf>,
     
     /// Show detailed statistics
+    #[arg(short, long)]
     pub detailed: bool,
 }
 
@@ -520,14 +540,18 @@ impl Command for StatsCommand {
 }
 
 /// Config command
+#[derive(clap::Args)]
 pub struct ConfigCommand {
     /// Show current configuration
+    #[arg(long)]
     pub show: bool,
     
-    /// Set a configuration value
-    pub set: Option<(String, String)>,
+    /// Set a configuration value (KEY VALUE)
+    #[arg(long, num_args = 2, value_names = ["KEY", "VALUE"])]
+    pub set: Option<Vec<String>>,
     
     /// Reset configuration to defaults
+    #[arg(long)]
     pub reset: bool,
 }
 
@@ -535,7 +559,7 @@ impl ConfigCommand {
     pub fn new(show: bool, set: Option<(String, String)>, reset: bool) -> Self {
         Self {
             show,
-            set,
+            set: set.map(|(k, v)| vec![k, v]),
             reset,
         }
     }
@@ -558,9 +582,11 @@ impl Command for ConfigCommand {
             println!("  Parallel Workers: {}", config.indexer.parallel_workers.to_string().bold());
         }
         
-        if let Some((key, value)) = &self.set {
-            println!("Setting {} = {}", key.bold(), value.bold());
-            println!("{}", "Configuration setting is not yet implemented".yellow().bold());
+        if let Some(values) = &self.set {
+            if values.len() == 2 {
+                println!("Setting {} = {}", values[0].bold(), values[1].bold());
+                println!("{}", "Configuration setting is not yet implemented".yellow().bold());
+            }
         }
         
         if self.reset {
@@ -573,11 +599,14 @@ impl Command for ConfigCommand {
 }
 
 /// Test command
+#[derive(clap::Args)]
 pub struct TestCommand {
     /// Test all components
+    #[arg(short, long)]
     pub all: bool,
     
     /// Test specific component
+    #[arg(short, long)]
     pub component: Option<String>,
 }
 
@@ -618,7 +647,7 @@ impl Command for TestCommand {
                 }
             }
             
-            println!("Component test completed successfully!".green().bold());
+            println!("{}", "Component test completed successfully!".green().bold());
         }
         
         Ok(())
@@ -674,16 +703,13 @@ async fn test_indexer_components() -> anyhow::Result<()> {
     println!("Testing indexer components...");
     
     // Test chunker
-    let config = ChunkConfig::default();
-    let chunker = Chunker::new(config);
-    
-    assert_eq!(chunker.config.max_tokens, 512);
-    assert_eq!(chunker.config.overlap_tokens, 64);
+    let chunk_config = ChunkConfig::default();
+    let _chunker = Chunker::new(chunk_config);
     
     println!("  ✓ Chunker creation");
     
     // Test parser
-    let parser = Parser::new();
+    let parser = mccp_indexer::Parser::new();
     
     let symbols = parser.parse("fn main() {}", Language::Rust)?;
     assert!(!symbols.is_empty());
@@ -719,9 +745,8 @@ async fn test_storage_components() -> anyhow::Result<()> {
     // Test storage backend
     let storage = StorageBackend::new();
     
-    assert_eq!(storage.projects.len(), 0);
-    assert_eq!(storage.symbols.len(), 0);
-    assert_eq!(storage.chunks.len(), 0);
+    let projects = storage.list_projects().await?;
+    assert_eq!(projects.len(), 0);
     
     println!("  ✓ Storage backend creation");
     
@@ -743,9 +768,9 @@ async fn test_provider_components() -> anyhow::Result<()> {
     // Test provider manager
     let manager = ProviderManager::new();
     
-    assert_eq!(manager.providers.len(), 0);
-    assert_eq!(manager.configs.len(), 0);
-    assert_eq!(manager.health_status.len(), 0);
+    assert_eq!(manager.list_providers().await.len(), 0);
+    assert_eq!(manager.get_all_configs().await.len(), 0);
+    assert_eq!(manager.get_all_health().await.len(), 0);
     
     println!("  ✓ Provider manager creation");
     

@@ -86,7 +86,7 @@ impl StorageBackend {
         if let Some(symbols) = self.symbols.get(project_id) {
             Ok(symbols.clone())
         } else {
-            Err(Error::ProjectNotFound(project_id.to_string()))
+            Ok(Vec::new())
         }
     }
 
@@ -101,7 +101,7 @@ impl StorageBackend {
         if let Some(chunks) = self.chunks.get(project_id) {
             Ok(chunks.clone())
         } else {
-            Err(Error::ProjectNotFound(project_id.to_string()))
+            Ok(Vec::new())
         }
     }
 
@@ -116,7 +116,7 @@ impl StorageBackend {
         if let Some(summaries) = self.summaries.get(project_id) {
             Ok(summaries.clone())
         } else {
-            Err(Error::ProjectNotFound(project_id.to_string()))
+            Ok(Vec::new())
         }
     }
 
@@ -378,9 +378,10 @@ mod tests {
         let storage = StorageBackend::new();
         
         let project = Project::new("test".to_string(), &std::path::PathBuf::from("/tmp"));
+        let project_id = project.id.as_str().to_string();
         storage.set_project(project.clone()).await.unwrap();
         
-        let retrieved = storage.get_project("test").await.unwrap();
+        let retrieved = storage.get_project(&project_id).await.unwrap();
         assert_eq!(retrieved.id, project.id);
         
         let projects = storage.list_projects().await.unwrap();

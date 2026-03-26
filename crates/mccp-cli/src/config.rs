@@ -1,4 +1,5 @@
 use super::*;
+use mccp_core::Language;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -141,7 +142,7 @@ impl Default for ProviderConfig {
 
 impl CliConfig {
     /// Load configuration from file
-    pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
+    pub fn load(path: &std::path::Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("Failed to read config file: {}", e))?;
         
@@ -152,7 +153,7 @@ impl CliConfig {
     }
     
     /// Save configuration to file
-    pub fn save(&self, path: &PathBuf) -> anyhow::Result<()> {
+    pub fn save(&self, path: &std::path::Path) -> anyhow::Result<()> {
         let content = toml::to_string_pretty(self)
             .map_err(|e| anyhow::anyhow!("Failed to serialize config: {}", e))?;
         
@@ -260,7 +261,7 @@ impl Default for ProjectConfig {
 
 impl ProjectConfig {
     /// Load configuration from file
-    pub fn load(path: &PathBuf) -> anyhow::Result<Self> {
+    pub fn load(path: &std::path::Path) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("Failed to read project config file: {}", e))?;
         
@@ -271,7 +272,7 @@ impl ProjectConfig {
     }
     
     /// Save configuration to file
-    pub fn save(&self, path: &PathBuf) -> anyhow::Result<()> {
+    pub fn save(&self, path: &std::path::Path) -> anyhow::Result<()> {
         let content = toml::to_string_pretty(self)
             .map_err(|e| anyhow::anyhow!("Failed to serialize project config: {}", e))?;
         

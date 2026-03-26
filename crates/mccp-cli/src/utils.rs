@@ -9,12 +9,12 @@ pub mod file_utils {
     use super::*;
     
     /// Check if a path is a valid project directory
-    pub fn is_valid_project_path(path: &PathBuf) -> bool {
+    pub fn is_valid_project_path(path: &std::path::Path) -> bool {
         path.exists() && path.is_dir()
     }
     
     /// Get all source files in a directory
-    pub fn get_source_files(path: &PathBuf, language: Option<Language>) -> Vec<PathBuf> {
+    pub fn get_source_files(path: &std::path::Path, language: Option<Language>) -> Vec<PathBuf> {
         let mut files = Vec::new();
         
         if !is_valid_project_path(path) {
@@ -34,13 +34,11 @@ pub mod file_utils {
             Some(Language::CSharp) => vec!["cs"],
             Some(Language::Ruby) => vec!["rb"],
             Some(Language::PHP) => vec!["php"],
-            Some(Language::Swift) => vec!["swift"],
             Some(Language::Kotlin) => vec!["kt", "kts"],
-            Some(Language::Rust) => vec!["rs"],
             None => vec![
                 "rs", "ts", "tsx", "js", "jsx", "py", "go", "java", 
                 "c", "h", "cpp", "cxx", "cc", "hpp", "hxx", "h++", 
-                "cs", "rb", "php", "swift", "kt", "kts"
+                "cs", "rb", "php", "kt", "kts"
             ],
         };
         
@@ -156,9 +154,9 @@ pub mod output_utils {
         bar.push('[');
         for i in 0..bar_width {
             if i < filled {
-                bar.push_str("█".green());
+                bar.push_str(&"█".green().to_string());
             } else {
-                bar.push_str("░".dimmed());
+                bar.push_str(&"░".dimmed().to_string());
             }
         }
         bar.push(']');
@@ -173,7 +171,7 @@ pub mod validation_utils {
     use super::*;
     
     /// Validate a project name
-    pub fn validate_project_name(name: &str) -> Result<(), String> {
+    pub fn validate_project_name(name: &str) -> std::result::Result<(), String> {
         if name.is_empty() {
             return Err("Project name cannot be empty".to_string());
         }
@@ -190,7 +188,7 @@ pub mod validation_utils {
     }
     
     /// Validate a port number
-    pub fn validate_port(port: u16) -> Result<(), String> {
+    pub fn validate_port(port: u16) -> std::result::Result<(), String> {
         if port == 0 {
             return Err("Port cannot be 0".to_string());
         }
@@ -203,7 +201,7 @@ pub mod validation_utils {
     }
     
     /// Validate a host address
-    pub fn validate_host(host: &str) -> Result<(), String> {
+    pub fn validate_host(host: &str) -> std::result::Result<(), String> {
         if host.is_empty() {
             return Err("Host cannot be empty".to_string());
         }
@@ -217,7 +215,7 @@ pub mod validation_utils {
     }
     
     /// Validate a path
-    pub fn validate_path(path: &PathBuf) -> Result<(), String> {
+    pub fn validate_path(path: &PathBuf) -> std::result::Result<(), String> {
         if path.as_os_str().is_empty() {
             return Err("Path cannot be empty".to_string());
         }
@@ -237,13 +235,14 @@ pub mod config_utils {
     }
     
     /// Get the default project configuration path
-    pub fn get_default_project_config_path(project_path: &PathBuf) -> PathBuf {
+    pub fn get_default_project_config_path(project_path: &std::path::Path) -> PathBuf {
         project_path.join(".mccp.toml")
     }
     
     /// Create default configuration directory
-    pub fn create_config_dir() -> Result<(), String> {
-        let config_dir = get_default_config_path().parent().unwrap();
+    pub fn create_config_dir() -> std::result::Result<(), String> {
+        let config_path = get_default_config_path();
+        let config_dir = config_path.parent().unwrap();
         
         if !config_dir.exists() {
             fs::create_dir_all(config_dir)
@@ -254,7 +253,7 @@ pub mod config_utils {
     }
     
     /// Load default configuration
-    pub fn load_default_config() -> Result<CliConfig, String> {
+    pub fn load_default_config() -> std::result::Result<CliConfig, String> {
         let config_path = get_default_config_path();
         
         if config_path.exists() {
@@ -266,7 +265,7 @@ pub mod config_utils {
     }
     
     /// Save default configuration
-    pub fn save_default_config(config: &CliConfig) -> Result<(), String> {
+    pub fn save_default_config(config: &CliConfig) -> std::result::Result<(), String> {
         create_config_dir()?;
         
         let config_path = get_default_config_path();
@@ -337,7 +336,6 @@ mod tests {
         assert!(validation_utils::validate_port(3000).is_ok());
         
         assert!(validation_utils::validate_port(0).is_err());
-        assert!(validation_utils::validate_port(65536).is_err());
     }
 
     #[test]

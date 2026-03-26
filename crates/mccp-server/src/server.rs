@@ -62,7 +62,7 @@ impl AppState {
 }
 
 /// Health check response
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct HealthResponse {
     status: String,
     version: String,
@@ -196,12 +196,13 @@ async fn get_symbol_map(
 /// Index progress SSE endpoint
 async fn index_progress_sse(
     State(state): State<AppState>,
-) -> Sse<impl StreamExt<Item = Result<Event, Infallible>>> {
+) -> Sse<impl StreamExt<Item = std::result::Result<Event, Infallible>>> {
     let mut rx = state.pipeline.progress_rx.clone();
     let stream = async_stream::stream! {
         loop {
             rx.changed().await.ok();
-            if let Some(p) = rx.borrow().clone() {
+            let progress = rx.borrow_and_update().clone();
+            if let Some(p) = progress {
                 let data = serde_json::to_string(&p).unwrap_or_default();
                 yield Ok(Event::default().data(data));
                 if p.percentage >= 100 { break; }
@@ -230,7 +231,7 @@ async fn list_projects(
 async fn query_stream_sse(
     State(state): State<AppState>,
     Json(req): Json<HttpQueryRequest>,
-) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
+) -> Sse<impl futures::Stream<Item = std::result::Result<Event, Infallible>>> {
     let engine_req = mccp_core::QueryRequest::new(req.project, req.query, req.top_k);
     let stream = async_stream::stream! {
         match state.query_engine.query(engine_req).await {

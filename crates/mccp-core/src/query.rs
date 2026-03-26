@@ -132,7 +132,7 @@ impl RankCandidate {
 }
 
 /// Query cache for caching query results
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QueryCache {
     cache: dashmap::DashMap<QueryCacheKey, Vec<QueryResult>>,
     max_entries: usize,
@@ -175,7 +175,7 @@ impl QueryCache {
 }
 
 /// Query engine for executing semantic queries
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QueryEngine {
     cache: QueryCache,
     ranker_config: RankerConfig,
