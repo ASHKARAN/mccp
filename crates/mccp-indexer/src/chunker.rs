@@ -132,6 +132,28 @@ impl Chunker {
             min_tokens,
         }
     }
+
+    /// V4-2: Annotate chunks with cycle warnings for functions in call cycles
+    pub fn annotate_cycle_warnings(chunks: &mut [Chunk], snapshot: &CodeIntelSnapshot) {
+        let cycled_symbols: std::collections::HashSet<&str> = snapshot.symbols.iter()
+            .filter(|s| s.in_cycle)
+            .map(|s| s.name.as_str())
+            .collect();
+
+        if cycled_symbols.is_empty() {
+            return;
+        }
+
+        for chunk in chunks.iter_mut() {
+            for sym_name in &cycled_symbols {
+                if chunk.content.contains(sym_name) {
+                    let warning = format!("// WARNING: `{}` is part of a call cycle\n", sym_name);
+                    chunk.content = format!("{}{}", warning, chunk.content);
+                    break; // one warning per chunk is enough
+                }
+            }
+        }
+    }
 }
 
 /// Language configuration for AST chunking

@@ -565,6 +565,257 @@ fn collect_source_files(root: &Path) -> Vec<PathBuf> {
     files
 }
 
+fn binary_exists(name: &str) -> bool {
+    std::process::Command::new("which")
+        .arg(name)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------
+// External analyzer adapters
+// ---------------------------------------------------------------------------
+
+/// Adapter wrapping the `rust-analyzer` LSP binary.
+pub struct RustAnalyzerAdapter;
+
+impl RustAnalyzerAdapter {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait::async_trait]
+impl CodeAnalyzer for RustAnalyzerAdapter {
+    fn name(&self) -> &'static str {
+        "rust-analyzer"
+    }
+
+    fn is_available(&self) -> bool {
+        binary_exists("rust-analyzer")
+    }
+
+    async fn install(&self) -> anyhow::Result<()> {
+        tracing::info!("Installing rust-analyzer via rustup");
+        let status = tokio::process::Command::new("rustup")
+            .args(["component", "add", "rust-analyzer"])
+            .status()
+            .await?;
+        anyhow::ensure!(status.success(), "rustup component add rust-analyzer failed");
+        Ok(())
+    }
+
+    async fn analyze(&self, project_root: &Path) -> anyhow::Result<CodeIntelSnapshot> {
+        // Verify rust-analyzer works
+        let output = tokio::process::Command::new("rust-analyzer")
+            .args(["analysis-stats", "--quiet"])
+            .current_dir(project_root)
+            .output()
+            .await;
+        match output {
+            Ok(o) if o.status.success() => {
+                tracing::info!("rust-analyzer analysis-stats succeeded");
+            }
+            _ => {
+                tracing::warn!("rust-analyzer analysis-stats failed or unavailable");
+            }
+        }
+        // Full LSP integration is complex; fall back to tree-sitter analysis.
+        tracing::info!("rust-analyzer adapter: falling back to TreeSitterAnalyzer for full analysis");
+        TreeSitterAnalyzer::new().analyze(project_root).await
+    }
+
+    fn supports_language(&self, lang: mccp_core::Language) -> bool {
+        matches!(lang, mccp_core::Language::Rust)
+    }
+}
+
+/// Adapter wrapping `universal-ctags`.
+pub struct CtagsAdapter;
+
+impl CtagsAdapter {
+    pub fn new() -> Self {
+        Self
+    }
+
+    fn map_ctags_kind(kind: &str) -> Option<SymbolKind> {
+        match kind {
+            "function" => Some(SymbolKind::Function),
+            "class" => Some(SymbolKind::Class),
+            "struct" => Some(SymbolKind::Struct),
+            "method" => Some(SymbolKind::Method),
+            "variable" => Some(SymbolKind::Variable),
+            "enum" => Some(SymbolKind::Enum),
+            "trait" => Some(SymbolKind::Trait),
+            "module" => Some(SymbolKind::Module),
+            "interface" => Some(SymbolKind::Interface),
+            "constant" => Some(SymbolKind::Const),
+            _ => None,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl CodeAnalyzer for CtagsAdapter {
+    fn name(&self) -> &'static str {
+        "ctags"
+    }
+
+    fn is_available(&self) -> bool {
+        binary_exists("ctags")
+    }
+
+    async fn install(&self) -> anyhow::Result<()> {
+        tracing::info!(
+            "Install universal-ctags manually:\n  \
+             Debian/Ubuntu: apt install universal-ctags\n  \
+             macOS:         brew install universal-ctags"
+        );
+        Ok(())
+    }
+
+    async fn analyze(&self, project_root: &Path) -> anyhow::Result<CodeIntelSnapshot> {
+        let output = tokio::process::Command::new("ctags")
+            .args([
+                "-R",
+                "--output-format=json",
+                "--fields=+neKS",
+                "-f",
+                "-",
+            ])
+            .arg(project_root)
+            .output()
+            .await?;
+
+        anyhow::ensure!(output.status.success(), "ctags exited with non-zero status");
+
+        let project_id = ProjectId::from_path(project_root).as_str().to_string();
+        let mut snapshot = CodeIntelSnapshot::new(project_id);
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        for line in stdout.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let entry: serde_json::Value = match serde_json::from_str(line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let name = match entry.get("name").and_then(|v| v.as_str()) {
+                Some(n) => n.to_string(),
+                None => continue,
+            };
+            let kind_str = entry.get("kind").and_then(|v| v.as_str()).unwrap_or("");
+            let kind = match Self::map_ctags_kind(kind_str) {
+                Some(k) => k,
+                None => continue,
+            };
+            let file = entry
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let start_line = entry.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+            let end_line = entry.get("end").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+            let id = format!("{file}::{name}::{kind:?}");
+            snapshot.symbols.push(SymbolDef {
+                id,
+                name,
+                kind,
+                file,
+                start_line,
+                end_line,
+                visibility: Visibility::Public,
+                doc_comment: None,
+                references: Vec::new(),
+                in_cycle: false,
+            });
+        }
+
+        tracing::info!(
+            "ctags produced {} symbols (call_edges not available from ctags)",
+            snapshot.symbols.len()
+        );
+        Ok(snapshot)
+    }
+
+    fn supports_language(&self, _lang: mccp_core::Language) -> bool {
+        true // ctags supports many languages
+    }
+}
+
+/// Adapter wrapping `ast-grep` (`sg`).
+pub struct AstGrepAdapter;
+
+impl AstGrepAdapter {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait::async_trait]
+impl CodeAnalyzer for AstGrepAdapter {
+    fn name(&self) -> &'static str {
+        "ast-grep"
+    }
+
+    fn is_available(&self) -> bool {
+        binary_exists("ast-grep") || binary_exists("sg")
+    }
+
+    async fn install(&self) -> anyhow::Result<()> {
+        tracing::info!("Installing ast-grep via cargo");
+        let status = tokio::process::Command::new("cargo")
+            .args(["install", "ast-grep"])
+            .status()
+            .await?;
+        anyhow::ensure!(status.success(), "cargo install ast-grep failed");
+        Ok(())
+    }
+
+    async fn analyze(&self, project_root: &Path) -> anyhow::Result<CodeIntelSnapshot> {
+        let bin = if binary_exists("sg") { "sg" } else { "ast-grep" };
+
+        // Try to find function definitions via pattern matching
+        let output = tokio::process::Command::new(bin)
+            .args(["run", "--pattern", "fn $NAME($_) { $$$ }", "--json"])
+            .arg(project_root)
+            .output()
+            .await;
+
+        match output {
+            Ok(ref o) if o.status.success() => {
+                tracing::info!(
+                    "ast-grep pattern scan produced {} bytes of output",
+                    o.stdout.len()
+                );
+            }
+            _ => {
+                tracing::warn!("ast-grep pattern scan failed or unavailable");
+            }
+        }
+
+        // ast-grep is primarily a pattern matcher and cannot produce a full
+        // CodeIntelSnapshot on its own; fall back to tree-sitter analysis.
+        tracing::info!("ast-grep adapter: falling back to TreeSitterAnalyzer for full analysis");
+        TreeSitterAnalyzer::new().analyze(project_root).await
+    }
+
+    fn supports_language(&self, lang: mccp_core::Language) -> bool {
+        matches!(
+            lang,
+            mccp_core::Language::Rust
+                | mccp_core::Language::TypeScript
+                | mccp_core::Language::JavaScript
+                | mccp_core::Language::Python
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -72,6 +72,60 @@ impl CodeIntelSnapshot {
     pub fn unused_symbols(&self) -> Vec<&SymbolDef> {
         self.symbols.iter().filter(|s| s.references.is_empty()).collect()
     }
+
+    /// Persist snapshot to ~/.mccp/data/{project_id}/code_intel.json
+    pub fn save(&self) -> anyhow::Result<std::path::PathBuf> {
+        let base = dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(".mccp")
+            .join("data")
+            .join(&self.project_id);
+        std::fs::create_dir_all(&base)?;
+        let path = base.join("code_intel.json");
+        let json = serde_json::to_string_pretty(self)?;
+        std::fs::write(&path, json)?;
+        tracing::info!("saved code_intel snapshot to {}", path.display());
+        Ok(path)
+    }
+
+    /// Load snapshot from ~/.mccp/data/{project_id}/code_intel.json
+    pub fn load(project_id: &str) -> anyhow::Result<Option<Self>> {
+        let path = dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(".mccp")
+            .join("data")
+            .join(project_id)
+            .join("code_intel.json");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let json = std::fs::read_to_string(&path)?;
+        let snap: Self = serde_json::from_str(&json)?;
+        tracing::info!("loaded code_intel snapshot from {}", path.display());
+        Ok(Some(snap))
+    }
+
+    /// Incrementally update: re-analyze only changed files, keep the rest
+    pub fn incremental_update(&mut self, changed_files: &[String], new_partial: CodeIntelSnapshot) {
+        // Build a lookup of which symbol ids belong to changed files
+        let changed_symbol_ids: std::collections::HashSet<String> = self.symbols.iter()
+            .filter(|s| changed_files.contains(&s.file))
+            .map(|s| s.id.clone())
+            .collect();
+
+        // Remove old data for changed files
+        self.symbols.retain(|s| !changed_files.contains(&s.file));
+        self.call_edges.retain(|e| !changed_symbol_ids.contains(&e.caller));
+        self.import_edges.retain(|e| !changed_files.contains(&e.from_file));
+        self.use_edges.retain(|e| !changed_symbol_ids.contains(&e.user));
+
+        // Merge in new data
+        self.symbols.extend(new_partial.symbols);
+        self.call_edges.extend(new_partial.call_edges);
+        self.use_edges.extend(new_partial.use_edges);
+        self.import_edges.extend(new_partial.import_edges);
+        self.built_at = chrono::Utc::now().timestamp();
+    }
 }
 
 /// A symbol definition extracted from source code

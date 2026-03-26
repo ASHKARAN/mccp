@@ -55,11 +55,17 @@ impl AppState {
             config.indexer.clone(),
         ));
 
+        // Try to load a persisted snapshot
+        let project_id = ProjectId::from_path(&std::path::PathBuf::from("."));
+        let existing = CodeIntelSnapshot::load(project_id.as_str())
+            .ok()
+            .flatten();
+
         Ok(Self {
             config,
             query_engine,
             pipeline,
-            code_intel: Arc::new(tokio::sync::RwLock::new(None)),
+            code_intel: Arc::new(tokio::sync::RwLock::new(existing)),
         })
     }
 }
@@ -626,6 +632,24 @@ async fn code_intel_refresh(
                 .collect();
             for sym in &mut snap.symbols {
                 sym.in_cycle = cycled.contains(&sym.id);
+            }
+            // Log cycle warnings
+            if !report.call_cycles.is_empty() || !report.import_cycles.is_empty() {
+                tracing::warn!(
+                    "detected {} call cycles and {} import cycles",
+                    report.call_cycles.len(),
+                    report.import_cycles.len()
+                );
+                for cycle in &report.call_cycles {
+                    tracing::warn!("call cycle: {}", cycle.join(" → "));
+                }
+                for cycle in &report.import_cycles {
+                    tracing::warn!("import cycle: {}", cycle.join(" → "));
+                }
+            }
+            // Persist to disk
+            if let Err(e) = snap.save() {
+                tracing::warn!("failed to persist code_intel snapshot: {e}");
             }
             let mut guard = state.code_intel.write().await;
             *guard = Some(snap);

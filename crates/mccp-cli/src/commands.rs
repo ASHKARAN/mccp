@@ -279,6 +279,15 @@ impl Command for IndexCommand {
                     println!("Indexed:       {}", body["indexed_files"].as_u64().unwrap_or(0).to_string().bold());
                     println!("Queue depth:   {}", body["queue_depth"].as_u64().unwrap_or(0).to_string().bold());
                     println!("Watching:      {}", if body["is_watching"].as_bool().unwrap_or(false) { "Yes" } else { "No" }.bold());
+
+                    // V4-2: Show cycle counts from persisted snapshot
+                    let project_id = mccp_core::ProjectId::from_path(&self.path);
+                    if let Ok(Some(snap)) = mccp_core::CodeIntelSnapshot::load(project_id.as_str()) {
+                        let report = mccp_indexer::CycleDetector::detect_all(&snap);
+                        println!("Cycles:        {} call / {} import",
+                            report.call_cycles.len().to_string().bold(),
+                            report.import_cycles.len().to_string().bold());
+                    }
                 }
                 Ok(resp) => {
                     eprintln!("Daemon returned error: HTTP {}", resp.status());
@@ -301,6 +310,15 @@ impl Command for IndexCommand {
                     println!("Indexed:       {}", status.indexed_files.to_string().bold());
                     println!("Queue depth:   {}", status.queue_depth.to_string().bold());
                     println!("Watching:      {}", if status.is_watching { "Yes" } else { "No" }.bold());
+
+                    // V4-2: Show cycle counts from persisted snapshot
+                    let pid = mccp_core::ProjectId::from_path(&self.path);
+                    if let Ok(Some(snap)) = mccp_core::CodeIntelSnapshot::load(pid.as_str()) {
+                        let report = mccp_indexer::CycleDetector::detect_all(&snap);
+                        println!("Cycles:        {} call / {} import",
+                            report.call_cycles.len().to_string().bold(),
+                            report.import_cycles.len().to_string().bold());
+                    }
                 }
             }
             return Ok(());
