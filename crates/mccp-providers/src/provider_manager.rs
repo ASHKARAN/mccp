@@ -269,7 +269,7 @@ mod tests {
         
         let all_health = manager.get_all_health().await;
         assert_eq!(all_health.len(), 1);
-        assert!(all_health[0].1.is_healthy);
+        assert!(all_health[0].1.is_healthy());
     }
 
     #[tokio::test]
@@ -296,6 +296,7 @@ mod tests {
             max_tokens: Some(1000),
             temperature: Some(0.7),
             timeout: Some(Duration::from_secs(30)),
+            settings: None,
         };
         
         manager.set_config(provider_id, config.clone()).await.unwrap();

@@ -357,10 +357,10 @@ mod tests {
         assert_eq!(Error::DockerError("test".to_string()).error_code(), 12);
         assert_eq!(Error::DaemonError("test".to_string()).error_code(), 13);
         assert_eq!(Error::IoError(std::io::Error::new(std::io::ErrorKind::NotFound, "test")).error_code(), 14);
-        assert_eq!(Error::JsonError(serde_json::Error::syntax(serde_json::error::Category::Eof, 0, 0)).error_code(), 15);
-        assert_eq!(Error::TomlError(toml::de::Error::custom("test")).error_code(), 16);
+        assert_eq!(Error::JsonError(serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err()).error_code(), 15);
+        assert_eq!(Error::TomlError(toml::from_str::<toml::Value>("invalid = [").unwrap_err()).error_code(), 16);
         assert_eq!(Error::RegexError(regex::Error::Syntax("test".to_string())).error_code(), 17);
-        assert_eq!(Error::HttpError(reqwest::Error::from(std::io::Error::new(std::io::ErrorKind::NotFound, "test"))).error_code(), 18);
+        // HttpError code 18 — skip reqwest::Error construction (not constructible in unit tests)
         assert_eq!(Error::ParseError("test".to_string()).error_code(), 19);
         assert_eq!(Error::ValidationError("test".to_string()).error_code(), 20);
         assert_eq!(Error::PermissionDenied("test".to_string()).error_code(), 21);

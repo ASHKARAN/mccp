@@ -104,6 +104,11 @@ impl GraphStore {
             .unwrap_or_default()
     }
 
+    /// Alias for `get_edges` — returns all outgoing edges from a node
+    pub fn get_edges_from(&self, node_id: &str) -> Vec<GraphEdge> {
+        self.get_edges(node_id)
+    }
+
     /// Check if an edge exists
     pub fn has_edge(&self, from: &str, to: &str) -> bool {
         self.edges.get(from)
@@ -130,30 +135,21 @@ impl GraphStore {
         let mut result = Vec::new();
 
         if config.include_self {
-            if let Some(node) = self.nodes.get(start_node) {
-                result.push(node.id.clone());
-                visited.insert(node.id.clone());
-            }
+            result.push(start_node.to_string());
         }
+        visited.insert(start_node.to_string());
+        queue.push_back((start_node.to_string(), 0usize));
 
-        queue.push_back(start_node.to_string());
-
-        while let Some(current) = queue.pop_front() {
-            if !visited.insert(current.clone()) {
+        while let Some((current, depth)) = queue.pop_front() {
+            if depth >= config.max_depth {
                 continue;
-            }
-
-            if result.len() >= config.max_depth {
-                break;
             }
 
             if let Some(edges) = self.edges.get(&current) {
                 for edge in edges.value() {
-                    if config.edge_kinds.contains(&edge.kind) {
-                        if visited.insert(edge.to.clone()) {
-                            result.push(edge.to.clone());
-                            queue.push_back(edge.to.clone());
-                        }
+                    if config.edge_kinds.contains(&edge.kind) && visited.insert(edge.to.clone()) {
+                        result.push(edge.to.clone());
+                        queue.push_back((edge.to.clone(), depth + 1));
                     }
                 }
             }
@@ -230,8 +226,9 @@ impl MultiProjectGraphStore {
 
     /// Add an edge to a specific project
     pub fn add_edge(&self, project_id: &str, from: &str, to: &str, kind: EdgeKind) {
-        let store = self.get_or_create(project_id);
-        store.add_edge(from, to, kind, project_id);
+        let store_ref = self.stores.entry(project_id.to_string())
+            .or_insert_with(GraphStore::new);
+        store_ref.add_edge(from, to, kind, project_id);
     }
 
     /// Check if an edge exists in a specific project

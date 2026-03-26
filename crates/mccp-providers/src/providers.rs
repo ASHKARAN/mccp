@@ -196,6 +196,14 @@ impl LlmProvider for OpenAiProvider {
     }
 }
 
+impl OpenAiProvider {
+    pub fn name(&self) -> &str { "OpenAI" }
+    pub fn version(&self) -> &str { "1.0.0" }
+    pub fn models(&self) -> Vec<String> {
+        vec!["gpt-4".to_string(), "gpt-3.5-turbo".to_string()]
+    }
+}
+
 /// Anthropic provider implementation
 #[derive(Debug, Clone)]
 pub struct AnthropicProvider {
@@ -334,6 +342,14 @@ impl LlmProvider for AnthropicProvider {
     }
 }
 
+impl AnthropicProvider {
+    pub fn name(&self) -> &str { "Anthropic" }
+    pub fn version(&self) -> &str { "1.0.0" }
+    pub fn models(&self) -> Vec<String> {
+        vec!["claude-3-opus-20240229".to_string(), "claude-3-sonnet-20240229".to_string()]
+    }
+}
+
 /// Local provider implementation (for testing)
 #[derive(Debug, Clone)]
 pub struct LocalProvider {
@@ -391,6 +407,14 @@ impl LlmProvider for LocalProvider {
 
     fn provider_fingerprint(&self) -> String {
         format!("local:{}", self.model)
+    }
+}
+
+impl LocalProvider {
+    pub fn name(&self) -> &str { "Local" }
+    pub fn version(&self) -> &str { "1.0.0" }
+    pub fn models(&self) -> Vec<String> {
+        vec!["mock-model".to_string()]
     }
 }
 

@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn test_persistence_creation() {
         let persistence = Persistence::new();
-        assert!(persistence.backup_exists("nonexistent.json") == false);
+        assert!(Persistence::backup_exists("nonexistent.json") == false);
     }
 
     #[tokio::test]

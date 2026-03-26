@@ -1,6 +1,6 @@
 use super::*;
 use mccp_core::*;
-use tree_sitter::{Language, Parser, Node};
+use tree_sitter::{Language as TsLanguage, Parser as TsParser, Node};
 
 /// Chunker for splitting source files into chunks
 #[derive(Debug, Clone)]
@@ -65,8 +65,8 @@ impl Chunker {
         let Some(cfg) = lang_config(file.language) else {
             return self.chunk_simple(file);
         };
-        let mut parser = Parser::new();
-        parser.set_language(cfg.ts_language)
+        let mut parser = TsParser::new();
+        parser.set_language(&cfg.ts_language)
               .expect("grammar version mismatch — update tree-sitter-* crates");
 
         let tree = match parser.parse(&file.content, None) {
@@ -136,7 +136,7 @@ impl Chunker {
 
 /// Language configuration for AST chunking
 struct LangConfig {
-    ts_language: tree_sitter::Language,
+    ts_language: TsLanguage,
     splittable_types: &'static [&'static str],
 }
 
@@ -332,7 +332,7 @@ mod tests {
         };
         let chunker = Chunker::new(config);
         
-        let temp_file = NamedTempFile::new().unwrap();
+        let temp_file = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
         let content = "fn main() {\n    println!(\"hello\");\n}\n\nfn test() {\n    assert_eq!(1 + 1, 2);\n}";
         std::fs::write(temp_file.path(), content).unwrap();
         
@@ -348,7 +348,7 @@ mod tests {
         let config = ChunkConfig::default();
         let chunker = Chunker::new(config);
         
-        let temp_file = NamedTempFile::new().unwrap();
+        let temp_file = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
         let content = "fn main() {\n    println!(\"hello\");\n}\n\nfn test() {\n    assert_eq!(1 + 1, 2);\n}";
         std::fs::write(temp_file.path(), content).unwrap();
         

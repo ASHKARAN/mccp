@@ -94,8 +94,8 @@ impl CostTracker {
 /// Get price per million tokens for a provider/model combination
 pub fn price_per_million(provider: &str, model: &str) -> Option<f64> {
     match (provider, model) {
-        ("openai", m) if m.contains("gpt-4o") => Some(5.00),
         ("openai", m) if m.contains("gpt-4o-mini") => Some(0.15),
+        ("openai", m) if m.contains("gpt-4o") => Some(5.00),
         ("anthropic", m) if m.contains("claude-3-5-sonnet") => Some(3.00),
         ("anthropic", m) if m.contains("claude-3-5-haiku") => Some(0.25),
         ("groq", _) => Some(0.05),

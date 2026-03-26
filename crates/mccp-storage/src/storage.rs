@@ -269,7 +269,7 @@ impl StorageBackend {
     }
 
     /// Get project statistics
-    pub async fn get_stats(&self, project_id: &str) -> Result<ProjectStats> {
+    pub async fn get_project_stats(&self, project_id: &str) -> Result<ProjectStats> {
         let symbols = self.get_symbols(project_id).await?;
         let chunks = self.get_chunks(project_id).await?;
         let summaries = self.get_summaries(project_id).await?;
@@ -474,7 +474,7 @@ mod tests {
         ];
         storage.set_symbols("test", symbols).await.unwrap();
         
-        let stats = storage.get_stats("test").await.unwrap();
+        let stats = storage.get_project_stats("test").await.unwrap();
         assert_eq!(stats.project_id, "test");
         assert_eq!(stats.total_symbols, 1);
         assert_eq!(stats.total_chunks, 0);

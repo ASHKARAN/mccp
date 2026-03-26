@@ -788,7 +788,7 @@ mod tests {
 
     #[test]
     fn test_symbol_extractor() {
-        let temp_file = NamedTempFile::new().unwrap();
+        let temp_file = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
         let content = "fn main() {\n    println!(\"hello\");\n}\n\nstruct User {\n    name: String,\n}";
         std::fs::write(temp_file.path(), content).unwrap();
         

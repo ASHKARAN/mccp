@@ -100,6 +100,7 @@ impl GraphBuilder {
             r"use\s+([\w:]+)",
             r#"import\s+[\w\*]+\s+from\s+['"]([^'"]+)['"]"#,
             r#"from\s+['"]([^'"]+)['"]\s+import"#,
+            r"from\s+([\w.]+)\s+import",  // Python: from typing import ...
             r#"#include\s+[<"]([^>"]+)[>"]"#,
         ];
 

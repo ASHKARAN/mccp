@@ -114,7 +114,7 @@ mod tests {
         
         assert_eq!(diff.modified, vec!["src/lib.rs"]);
         assert_eq!(diff.added, vec!["src/new.rs"]);
-        assert_eq!(diff.removed, vec!["src/lib.rs"]); // Note: this is expected due to the logic
+        assert!(diff.removed.is_empty());
     }
 
     #[test]

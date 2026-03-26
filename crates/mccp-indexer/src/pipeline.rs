@@ -1,7 +1,8 @@
 use super::*;
 use mccp_core::*;
+use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, watch, Mutex};
 use tokio::time::{Duration, Instant};
 use ignore::WalkBuilder;
 
@@ -34,8 +35,10 @@ pub struct IndexJob {
 impl IndexingPipeline {
     /// Create a new indexing pipeline
     pub fn new(project: Project, config: IndexerConfig) -> Self {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::unbounded_channel::<IndexJob>();
         let (progress_tx, progress_rx) = watch::channel(None);
+        // Wrap receiver in Arc<Mutex> so multiple workers can share it (work-stealing)
+        let rx = Arc::new(Mutex::new(rx));
         
         let chunker = Chunker::new(ChunkConfig {
             max_tokens: config.max_chunk_tokens,
@@ -53,16 +56,22 @@ impl IndexingPipeline {
         };
         
         let workers = (0..processing_workers).map(|_| {
-            let rx = rx.resubscribe();
+            let rx = Arc::clone(&rx);
             let chunker = chunker.clone();
             let parser = parser.clone();
             let summarizer = summarizer.clone();
             let graph_builder = graph_builder.clone();
             
             tokio::spawn(async move {
-                while let Ok(job) = rx.recv().await {
-                    if let Err(e) = Self::process_job(job, &chunker, &parser, &summarizer, &graph_builder).await {
-                        eprintln!("Error processing job: {}", e);
+                loop {
+                    let job = rx.lock().await.recv().await;
+                    match job {
+                        Some(job) => {
+                            if let Err(e) = Self::process_job(job, &chunker, &parser, &summarizer, &graph_builder).await {
+                                eprintln!("Error processing job: {}", e);
+                            }
+                        }
+                        None => break,
                     }
                 }
             })
@@ -107,7 +116,7 @@ impl IndexingPipeline {
         self.index_existing_files().await?;
         
         // Start watching for changes
-        if let Some(watcher) = &mut self.file_watcher {
+        if let Some(watcher) = self.file_watcher.take() {
             self.start_watching(watcher).await?;
         }
         
@@ -144,14 +153,14 @@ impl IndexingPipeline {
             if let Ok(source_file) = SourceFile::from_path(&file_path) {
                 let cached_hash = self.file_hash_cache.get(&relative_path);
                 
-                if cached_hash.map_or(true, |h| h != source_file.hash) {
+                if cached_hash.map_or(true, |h| h.value() != &source_file.hash) {
                     // File has changed, queue for indexing
                     let job = IndexJob {
                         project_id: self.project.id.as_str().to_string(),
-                        file_path: relative_path,
+                        file_path: relative_path.clone(),
                         content: source_file.content,
                         language: source_file.language,
-                        hash: source_file.hash,
+                        hash: source_file.hash.clone(),
                     };
                     
                     self.processing_queue.send(job)
@@ -167,7 +176,7 @@ impl IndexingPipeline {
     }
 
     /// Start watching for file changes
-    async fn start_watching(&self, watcher: &mut FileWatcher) -> Result<()> {
+    async fn start_watching(&self, mut watcher: FileWatcher) -> Result<()> {
         tokio::spawn(async move {
             while let Some(event) = watcher.next_event().await {
                 match event {
@@ -250,7 +259,7 @@ impl IndexingPipeline {
             project_id: self.project.id.as_str().to_string(),
             file_count: self.project.source_files().len(),
             indexed_files: self.file_hash_cache.len(),
-            queue_depth: self.processing_queue.capacity(),
+            queue_depth: 0, // unbounded channel has no fixed capacity
             is_watching: self.config.watch_enabled,
         }
     }
@@ -283,6 +292,14 @@ impl IndexingPipeline {
             .map(|e| e.into_path())
             .collect()
     }
+}
+
+/// Returns true if the file extension is a supported source language
+fn is_supported_extension(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| Language::from_extension(ext).is_some())
+        .unwrap_or(false)
 }
 
 /// Indexing progress event
@@ -321,7 +338,10 @@ impl Parser {
             path: PathBuf::from("temp"),
             language,
             content: content.to_string(),
-            hash: format!("{:x}", sha2::Sha256::digest(content.as_bytes())),
+            hash: {
+                use sha2::Digest;
+                format!("{:x}", sha2::Sha256::new().chain_update(content.as_bytes()).finalize())
+            },
             size: content.len(),
             modified: chrono::Utc::now(),
         };
@@ -365,7 +385,7 @@ impl GraphBuilder {
 
     /// Build a call graph for a project
     pub fn build_graph(&self, files: &[SourceFile]) -> GraphStore {
-        GraphBuilder::build_graph(files)
+        mccp_core::GraphBuilder::build_graph(files)
     }
 }
 
@@ -374,8 +394,8 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_indexing_pipeline_creation() {
+    #[tokio::test]
+    async fn test_indexing_pipeline_creation() {
         let temp_dir = TempDir::new().unwrap();
         let project = Project::new("test".to_string(), temp_dir.path());
         let config = IndexerConfig::default();
@@ -399,8 +419,8 @@ mod tests {
         assert_eq!(symbols[0].kind, SymbolKind::Function);
     }
 
-    #[test]
-    fn test_summarizer() {
+    #[tokio::test]
+    async fn test_summarizer() {
         let summarizer = Summarizer::new();
         let chunk = Chunk::new(
             "proj_123".to_string(),
@@ -413,9 +433,8 @@ mod tests {
             ChunkScope::Function("main".to_string()),
         );
         
-        // Note: This test would need to be async in a real implementation
-        // For now, we just test that the method exists
-        assert!(summarizer.summarize(&chunk).is_ok());
+        let result = summarizer.summarize(&chunk).await;
+        assert!(result.is_ok());
     }
 
     #[test]

@@ -154,6 +154,9 @@ pub struct IndexerConfig {
     pub secrets_scan: bool,
     pub io_buffer_kb: usize,
     pub mmap_threshold_kb: usize,
+    /// Extra ignore patterns (gitignore syntax) applied on top of .gitignore rules
+    #[serde(default)]
+    pub extra_ignore_patterns: Vec<String>,
 }
 
 impl Default for IndexerConfig {
@@ -167,6 +170,7 @@ impl Default for IndexerConfig {
             secrets_scan: true,
             io_buffer_kb: 256,
             mmap_threshold_kb: 512,
+            extra_ignore_patterns: vec![],
         }
     }
 }

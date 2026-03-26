@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn test_chunker() {
-        let temp_file = NamedTempFile::new().unwrap();
+        let temp_file = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
         let content = "fn main() {\n    println!(\"hello\");\n}\n\nfn test() {\n    assert_eq!(1 + 1, 2);\n}";
         std::fs::write(temp_file.path(), content).unwrap();
         

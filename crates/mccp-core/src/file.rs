@@ -165,20 +165,25 @@ impl SecretsScrubber {
     /// Scrub secrets from content
     pub fn scrub(content: &str) -> String {
         let patterns = [
-            // API keys
-            (r#"API[_-]?KEY[_-]?=.*?['"]([A-Za-z0-9]{20,})['"]"#, "[REDACTED_API_KEY]"),
-            (r#"SECRET[_-]?=.*?['"]([A-Za-z0-9]{20,})['"]"#, "[REDACTED_SECRET]"),
-            (r#"TOKEN[_-]?=.*?['"]([A-Za-z0-9]{20,})['"]"#, "[REDACTED_TOKEN]"),
+            // OpenAI-style keys (sk-...)
+            (r"sk-[A-Za-z0-9\-]{10,}", "[REDACTED_API_KEY]"),
+            
+            // GitHub tokens — must come BEFORE generic TOKEN pattern
+            (r"ghp_[A-Za-z0-9]{32,}", "[REDACTED_GITHUB_TOKEN]"),
+            (r"gho_[A-Za-z0-9]{32,}", "[REDACTED_GITHUB_TOKEN]"),
+            (r"ghu_[A-Za-z0-9]{32,}", "[REDACTED_GITHUB_TOKEN]"),
+            (r"ghs_[A-Za-z0-9]{32,}", "[REDACTED_GITHUB_TOKEN]"),
+            (r"ghr_[A-Za-z0-9]{32,}", "[REDACTED_GITHUB_TOKEN]"),
+            
+            // Generic API_KEY assignment (value may contain hyphens, 8+ chars)
+            (r#"API[_-]?KEY[_-]?\s*=\s*['"]([A-Za-z0-9_\-]{8,})['"]"#, "[REDACTED_API_KEY]"),
+            // SECRET assignment
+            (r#"SECRET[_-]?\s*=\s*['"]([A-Za-z0-9_\-]{8,})['"]"#, "[REDACTED_SECRET]"),
+            // TOKEN assignment
+            (r#"TOKEN[_-]?\s*=\s*['"]([A-Za-z0-9_\-]{8,})['"]"#, "[REDACTED_TOKEN]"),
             
             // AWS keys
             (r"AKIA[0-9A-Z]{16}", "[REDACTED_AWS_KEY]"),
-            
-            // GitHub tokens
-            (r"ghp_[A-Za-z0-9]{36}", "[REDACTED_GITHUB_TOKEN]"),
-            (r"gho_[A-Za-z0-9]{36}", "[REDACTED_GITHUB_TOKEN]"),
-            (r"ghu_[A-Za-z0-9]{36}", "[REDACTED_GITHUB_TOKEN]"),
-            (r"ghs_[A-Za-z0-9]{36}", "[REDACTED_GITHUB_TOKEN]"),
-            (r"ghr_[A-Za-z0-9]{36}", "[REDACTED_GITHUB_TOKEN]"),
             
             // Database URLs
             (r"postgres://\S+", "[REDACTED_DB_URL]"),
@@ -229,7 +234,7 @@ mod tests {
 
     #[test]
     fn test_source_file_from_path() {
-        let temp_file = NamedTempFile::new().unwrap();
+        let temp_file = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
         let content = "fn main() { println!(\"hello\"); }";
         std::fs::write(temp_file.path(), content).unwrap();
         

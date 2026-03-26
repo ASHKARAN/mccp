@@ -151,6 +151,24 @@ impl OllamaProvider {
         self.timeout = timeout;
         self
     }
+
+    /// Get the provider name
+    pub fn name(&self) -> &'static str { "Ollama" }
+
+    /// Get the provider version string
+    pub fn version(&self) -> &'static str { "1.0.0" }
+
+    /// Get the list of loaded models (returns the configured model)
+    pub fn models(&self) -> Vec<String> { vec![self.model.clone()] }
+
+    /// Get the currently active model
+    pub fn current_model(&self) -> &str { &self.model }
+
+    /// Switch to a different model
+    pub fn set_model(&mut self, model: String) -> anyhow::Result<()> {
+        self.model = model;
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]

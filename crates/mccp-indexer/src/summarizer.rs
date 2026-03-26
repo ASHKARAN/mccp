@@ -237,8 +237,8 @@ mod tests {
         let stats = summarizer.stats(&summaries);
         
         assert_eq!(stats.total_summaries, 3);
-        assert_eq!(stats.total_chars, 42); // "Summary 1" + "Summary 2 with more content" + "Short"
-        assert_eq!(stats.avg_chars, 14);
+        assert_eq!(stats.total_chars, 41); // "Summary 1" + "Summary 2 with more content" + "Short"
+        assert_eq!(stats.avg_chars, 13);
         assert_eq!(stats.max_chars, 27);
         assert_eq!(stats.min_chars, 5);
     }
