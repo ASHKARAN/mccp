@@ -1,5 +1,6 @@
 use super::*;
 use mccp_core::*;
+use crate::chunker::Chunker;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch, Mutex};
