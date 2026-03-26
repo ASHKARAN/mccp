@@ -36,23 +36,23 @@ services:
       - OLLAMA_FLASH_ATTENTION=true
 
 
-  # openwebui:
-  #   image: openeuler/open-webui:latest
-  #   container_name: openwebui
-  #   restart: always
-  #   ports:
-  #     - "3000:8080"
-  #   environment:
-  #     # Point the UI to your local Ollama API
-  #     - OLLAMA_API_BASE_URL=http://ollama:11434
-  #     - WEBUI_SECRET_KEY=some-strong-random-key-here
-  #     - USER_AGENT=OpenWebUI-Local
-  #     - LOG_LEVEL=DEBUG
+  openwebui:
+    image: openeuler/open-webui:latest
+    container_name: openwebui
+    restart: always
+    ports:
+      - "3000:8080"
+    environment:
+      # Point the UI to your local Ollama API
+      - OLLAMA_API_BASE_URL=http://ollama:11434
+      - WEBUI_SECRET_KEY=some-strong-random-key-here
+      - USER_AGENT=OpenWebUI-Local
+      - LOG_LEVEL=DEBUG
 
-  #   depends_on:
-  #     - ollama
-  #   networks:
-  #     - mccp_network
+    depends_on:
+      - ollama
+    networks:
+      - mccp_network
 
 volumes:
   ollama_data:
