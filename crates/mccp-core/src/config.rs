@@ -2,6 +2,8 @@ use super::*;
 use std::path::PathBuf;
 use std::collections::HashMap;
 
+fn default_true() -> bool { true }
+
 /// Per-agent access control configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
@@ -178,6 +180,9 @@ pub struct IndexerConfig {
     /// Extra ignore patterns (gitignore syntax) applied on top of .gitignore rules
     #[serde(default)]
     pub extra_ignore_patterns: Vec<String>,
+    /// Skip common build/dependency/system directories by default (e.g. node_modules, target, .git)
+    #[serde(default = "default_true")]
+    pub skip_default_dirs: bool,
 }
 
 impl Default for IndexerConfig {
@@ -192,6 +197,7 @@ impl Default for IndexerConfig {
             io_buffer_kb: 256,
             mmap_threshold_kb: 512,
             extra_ignore_patterns: vec![],
+            skip_default_dirs: true,
         }
     }
 }

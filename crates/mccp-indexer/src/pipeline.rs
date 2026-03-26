@@ -6,6 +6,33 @@ use tokio::sync::{mpsc, watch, Mutex};
 use tokio::time::{Duration, Instant};
 use ignore::WalkBuilder;
 
+/// Directories always skipped when `skip_default_dirs` is enabled.
+/// Covers VCS, package-manager caches, build outputs, and IDE metadata.
+const DEFAULT_SKIP_DIRS: &[&str] = &[
+    // VCS
+    ".git", ".hg", ".svn",
+    // Node / JS / TS
+    "node_modules", ".npm", ".yarn", ".pnp",
+    // Rust
+    "target",
+    // Python
+    "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".tox",
+    "site-packages", "dist-packages",
+    // Go
+    "vendor",
+    // Java / Kotlin / Gradle / Maven
+    "build", ".gradle", ".mvn",
+    // .NET / C#
+    "bin", "obj", "packages",
+    // Generic build/dist
+    "dist", "out", ".output", ".next", ".nuxt", ".turbo",
+    // IDE / editor
+    ".idea", ".vscode", ".vs",
+    // Misc
+    ".cache", ".parcel-cache", "coverage", ".nyc_output",
+    ".terraform", ".serverless",
+];
+
 /// Indexing pipeline for processing source files
 pub struct IndexingPipeline {
     project: Project,
@@ -305,7 +332,19 @@ impl IndexingPipeline {
             builder.add_ignore(pattern);
         }
 
+        let skip_defaults = self.config.skip_default_dirs;
+
         builder
+            .filter_entry(move |e| {
+                if skip_defaults {
+                    if let Some(name) = e.file_name().to_str() {
+                        if DEFAULT_SKIP_DIRS.contains(&name) {
+                            return false;
+                        }
+                    }
+                }
+                true
+            })
             .build()
             .filter_map(|entry| entry.ok())
             .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))

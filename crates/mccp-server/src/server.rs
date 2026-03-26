@@ -72,6 +72,7 @@ pub struct AppState {
 
     pub projects: Arc<RwLock<HashMap<String, ProjectRuntime>>>,
     pub tasks: Arc<RwLock<HashMap<String, TaskInfo>>>,
+    pub task_handles: Arc<Mutex<HashMap<String, tokio::task::JoinHandle<()>>>>,
 }
 
 impl AppState {
@@ -111,6 +112,7 @@ impl AppState {
             sys: Arc::new(Mutex::new(System::new_all())),
             projects: Arc::new(RwLock::new(HashMap::new())),
             tasks: Arc::new(RwLock::new(HashMap::new())),
+            task_handles: Arc::new(Mutex::new(HashMap::new())),
         };
 
         // Load persisted projects registry (best-effort)
@@ -514,8 +516,8 @@ async fn api_system_metrics(State(state): State<AppState>) -> impl IntoResponse 
 
     Json(SystemMetrics {
         cpu_percent,
-        ram_used_bytes: sys.used_memory().saturating_mul(1024),
-        ram_total_bytes: sys.total_memory().saturating_mul(1024),
+        ram_used_bytes: sys.used_memory(),
+        ram_total_bytes: sys.total_memory(),
         load_avg_1,
     })
 }
@@ -767,7 +769,9 @@ async fn spawn_reindex_task(state: AppState, project_id: String) -> anyhow::Resu
     broadcast_project_updated(&state, &project_id).await;
 
     let task_id_spawn = task_id.clone();
-    tokio::spawn(async move {
+    let task_id_handle = task_id.clone();
+    let handles_ref = state.task_handles.clone();
+    let handle = tokio::spawn(async move {
         let task_id = task_id_spawn;
         let pipeline = {
             let projects = state.projects.read().await;
@@ -807,6 +811,9 @@ async fn spawn_reindex_task(state: AppState, project_id: String) -> anyhow::Resu
 
         let result = pipeline.force_reindex().await;
         let finished_at = now_rfc3339();
+
+        // Remove our handle from task_handles
+        state.task_handles.lock().await.remove(&task_id);
 
         match result {
             Ok(_) => {
@@ -857,6 +864,8 @@ async fn spawn_reindex_task(state: AppState, project_id: String) -> anyhow::Resu
             }
         }
     });
+
+    handles_ref.lock().await.insert(task_id_handle, handle);
 
     Ok(task_id)
 }
@@ -929,8 +938,27 @@ async fn api_cancel_task(
 
     t.state = "canceled".to_string();
     t.finished_at = Some(now_rfc3339());
+    let project_id = t.project_id.clone();
     let updated = t.clone();
     drop(tasks);
+
+    // Abort the spawned task if it's still running
+    if let Some(handle) = state.task_handles.lock().await.remove(&task_id) {
+        handle.abort();
+    }
+
+    // Reset project status back from "indexing" if applicable
+    if let Some(pid) = project_id {
+        let mut projects = state.projects.write().await;
+        if let Some(p) = projects.get_mut(&pid) {
+            if p.status == "indexing" {
+                p.status = "not_indexed".to_string();
+            }
+        }
+        drop(projects);
+        broadcast_projects_snapshot(&state).await;
+        broadcast_project_updated(&state, &pid).await;
+    }
 
     broadcast(&state, "tasks.updated", updated).await;
     Json(serde_json::json!({ "ok": true })).into_response()
@@ -965,7 +993,18 @@ async fn api_list_logs(
 
     let mut out = Vec::new();
     let buf = state.logs.lock().await;
+
+    // Cursor-based pagination: skip entries until we pass the cursor id.
+    let mut past_cursor = q.cursor.is_none();
+
     for line in buf.iter() {
+        if !past_cursor {
+            if Some(&line.id) == q.cursor.as_ref() {
+                past_cursor = true;
+            }
+            continue;
+        }
+
         if let Some(ref lvl) = q.level {
             if &line.level != lvl {
                 continue;
@@ -990,12 +1029,12 @@ async fn api_list_logs(
         if since.is_some() || until.is_some() {
             if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&line.ts) {
                 if let Some(ref s) = since {
-                    if ts < s.clone() {
+                    if ts < *s {
                         continue;
                     }
                 }
                 if let Some(ref u) = until {
-                    if ts > u.clone() {
+                    if ts > *u {
                         continue;
                     }
                 }
@@ -1008,7 +1047,13 @@ async fn api_list_logs(
         }
     }
 
-    Json(LogsResponse { items: out, next_cursor: None })
+    let next_cursor = if out.len() >= limit {
+        out.last().map(|l| l.id.clone())
+    } else {
+        None
+    };
+
+    Json(LogsResponse { items: out, next_cursor })
 }
 
 async fn ws_upgrade(
@@ -1051,8 +1096,8 @@ async fn ws_handle(mut socket: WebSocket, state: AppState) {
         };
         let m = SystemMetrics {
             cpu_percent,
-            ram_used_bytes: sys.used_memory().saturating_mul(1024),
-            ram_total_bytes: sys.total_memory().saturating_mul(1024),
+            ram_used_bytes: sys.used_memory(),
+            ram_total_bytes: sys.total_memory(),
             load_avg_1: Some(System::load_average().one),
         };
         ws_send(&mut socket, "system.metrics", m).await;
@@ -1091,8 +1136,8 @@ async fn ws_handle(mut socket: WebSocket, state: AppState) {
                 let cpu_percent = if sys.cpus().is_empty() { 0.0 } else { sys.cpus().iter().map(|c| c.cpu_usage()).sum::<f32>() / (sys.cpus().len() as f32) };
                 let m = SystemMetrics {
                     cpu_percent,
-                    ram_used_bytes: sys.used_memory().saturating_mul(1024),
-                    ram_total_bytes: sys.total_memory().saturating_mul(1024),
+                    ram_used_bytes: sys.used_memory(),
+                    ram_total_bytes: sys.total_memory(),
                     load_avg_1: Some(System::load_average().one),
                 };
                 ws_send(&mut socket, "system.metrics", m).await;
