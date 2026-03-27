@@ -1,5 +1,6 @@
 use crate::{Language, SymbolKind};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Top-level snapshot of codebase structure, serialized to
@@ -12,6 +13,18 @@ pub struct CodeIntelSnapshot {
     pub call_edges: Vec<CallEdge>,
     pub use_edges: Vec<UseEdge>,
     pub import_edges: Vec<ImportEdge>,
+    /// Detected execution flows (API → Controller → Service → Repo → Model)
+    #[serde(default)]
+    pub flows: Vec<ExecutionFlow>,
+    /// Detected framework information per file
+    #[serde(default)]
+    pub frameworks: Vec<FrameworkInfo>,
+    /// High-level project structure
+    #[serde(default)]
+    pub structure: Option<ProjectStructure>,
+    /// Detected codegen patterns (e.g. Lombok, derive macros)
+    #[serde(default)]
+    pub codegen_patterns: Vec<CodegenPattern>,
 }
 
 impl CodeIntelSnapshot {
@@ -23,6 +36,10 @@ impl CodeIntelSnapshot {
             call_edges: Vec::new(),
             use_edges: Vec::new(),
             import_edges: Vec::new(),
+            flows: Vec::new(),
+            frameworks: Vec::new(),
+            structure: None,
+            codegen_patterns: Vec::new(),
         }
     }
 
@@ -138,10 +155,27 @@ pub struct SymbolDef {
     pub file: String,
     pub start_line: u32,
     pub end_line: u32,
+    pub start_column: u32,
+    pub end_column: u32,
     pub visibility: Visibility,
     pub doc_comment: Option<String>,
     pub references: Vec<SymbolRef>,
     pub in_cycle: bool,
+    /// Annotations/decorators/attributes on this symbol
+    #[serde(default)]
+    pub annotations: Vec<Annotation>,
+    /// Qualified name (e.g. "MyClass.myMethod" or "crate::module::func")
+    #[serde(default)]
+    pub qualified_name: Option<String>,
+    /// Parent symbol id (e.g. method's class, inner class's outer class)
+    #[serde(default)]
+    pub parent_symbol: Option<String>,
+    /// Language this symbol was defined in
+    #[serde(default)]
+    pub language: Option<String>,
+    /// Signature (parameters and return type for functions/methods)
+    #[serde(default)]
+    pub signature: Option<String>,
 }
 
 impl SymbolDef {
@@ -154,11 +188,44 @@ impl SymbolDef {
             file,
             start_line,
             end_line,
+            start_column: 0,
+            end_column: 0,
             visibility: Visibility::Private,
             doc_comment: None,
             references: Vec::new(),
             in_cycle: false,
+            annotations: Vec::new(),
+            qualified_name: None,
+            parent_symbol: None,
+            language: None,
+            signature: None,
         }
+    }
+
+    pub fn with_columns(mut self, start_col: u32, end_col: u32) -> Self {
+        self.start_column = start_col;
+        self.end_column = end_col;
+        self
+    }
+
+    pub fn with_language(mut self, lang: &str) -> Self {
+        self.language = Some(lang.to_string());
+        self
+    }
+
+    pub fn with_qualified_name(mut self, qn: String) -> Self {
+        self.qualified_name = Some(qn);
+        self
+    }
+
+    pub fn with_parent(mut self, parent_id: String) -> Self {
+        self.parent_symbol = Some(parent_id);
+        self
+    }
+
+    pub fn with_signature(mut self, sig: String) -> Self {
+        self.signature = Some(sig);
+        self
     }
 }
 
@@ -176,7 +243,229 @@ pub enum Visibility {
 pub struct SymbolRef {
     pub file: String,
     pub line: u32,
+    pub column: u32,
+    pub end_line: u32,
+    pub end_column: u32,
     pub context: String,
+    /// What kind of reference this is
+    #[serde(default)]
+    pub ref_kind: Option<String>,
+}
+
+/// An annotation/decorator/attribute on a symbol
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Annotation {
+    pub name: String,
+    #[serde(default)]
+    pub arguments: Vec<String>,
+    pub line: u32,
+}
+
+/// Detected codegen pattern (Lombok, derive macros, etc.)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodegenPattern {
+    pub file: String,
+    pub line: u32,
+    pub pattern_type: CodegenType,
+    pub generated_members: Vec<String>,
+    pub source_annotation: String,
+}
+
+/// Types of code generation
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CodegenType {
+    /// Java Lombok (@Data, @Builder, @Getter, etc.)
+    Lombok,
+    /// Rust derive macros (#[derive(...)],  etc.)
+    RustDerive,
+    /// Python dataclass decorators
+    PythonDataclass,
+    /// TypeScript decorators
+    TypeScriptDecorator,
+    /// Kotlin data class
+    KotlinDataClass,
+    /// C# auto-properties, records
+    CSharpRecord,
+    /// Other codegen pattern
+    Other(String),
+}
+
+/// An execution flow through the system (e.g. API call → Controller → Service → Repo)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionFlow {
+    pub id: String,
+    pub name: String,
+    pub flow_type: FlowType,
+    pub steps: Vec<FlowStep>,
+    pub entry_file: String,
+    pub entry_line: u32,
+}
+
+/// Type of execution flow
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FlowType {
+    HttpEndpoint,
+    CliCommand,
+    WebSocket,
+    EventHandler,
+    ScheduledTask,
+    MessageConsumer,
+}
+
+/// A single step in an execution flow
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlowStep {
+    pub symbol_id: String,
+    pub file: String,
+    pub start_line: u32,
+    pub end_line: u32,
+    pub layer: ArchitecturalLayer,
+    pub description: String,
+    /// Annotations/decorators on this step
+    #[serde(default)]
+    pub annotations: Vec<String>,
+}
+
+/// Architectural layer a symbol belongs to
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ArchitecturalLayer {
+    Controller,
+    Service,
+    Repository,
+    Model,
+    Middleware,
+    Utility,
+    Config,
+    Router,
+    Handler,
+    Interface,
+    Unknown,
+}
+
+impl ArchitecturalLayer {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Controller => "controller",
+            Self::Service => "service",
+            Self::Repository => "repository",
+            Self::Model => "model",
+            Self::Middleware => "middleware",
+            Self::Utility => "utility",
+            Self::Config => "config",
+            Self::Router => "router",
+            Self::Handler => "handler",
+            Self::Interface => "interface",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+/// Detected framework information for a file or module
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrameworkInfo {
+    pub framework: Framework,
+    pub version: Option<String>,
+    pub file: String,
+    pub detected_patterns: Vec<String>,
+}
+
+/// Known frameworks
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Framework {
+    // Java
+    SpringBoot,
+    SpringMVC,
+    Quarkus,
+    Micronaut,
+    // JavaScript/TypeScript
+    Express,
+    NestJS,
+    NextJS,
+    Fastify,
+    // Python
+    Django,
+    Flask,
+    FastAPI,
+    // Rust
+    Actix,
+    Axum,
+    Rocket,
+    // Go
+    Gin,
+    Echo,
+    Fiber,
+    // C#
+    AspNetCore,
+    // Ruby
+    Rails,
+    Sinatra,
+    // PHP
+    Laravel,
+    Symfony,
+    // Kotlin
+    Ktor,
+    /// Unknown framework with name hint
+    Other(String),
+}
+
+impl Framework {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::SpringBoot => "Spring Boot",
+            Self::SpringMVC => "Spring MVC",
+            Self::Quarkus => "Quarkus",
+            Self::Micronaut => "Micronaut",
+            Self::Express => "Express",
+            Self::NestJS => "NestJS",
+            Self::NextJS => "Next.js",
+            Self::Fastify => "Fastify",
+            Self::Django => "Django",
+            Self::Flask => "Flask",
+            Self::FastAPI => "FastAPI",
+            Self::Actix => "Actix",
+            Self::Axum => "Axum",
+            Self::Rocket => "Rocket",
+            Self::Gin => "Gin",
+            Self::Echo => "Echo",
+            Self::Fiber => "Fiber",
+            Self::AspNetCore => "ASP.NET Core",
+            Self::Rails => "Rails",
+            Self::Sinatra => "Sinatra",
+            Self::Laravel => "Laravel",
+            Self::Symfony => "Symfony",
+            Self::Ktor => "Ktor",
+            Self::Other(name) => name.as_str(),
+        }
+    }
+}
+
+/// High-level project structure with modules and their relationships
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectStructure {
+    pub modules: Vec<StructureModule>,
+    pub language_stats: HashMap<String, LanguageStats>,
+}
+
+/// A module/package in the project structure
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StructureModule {
+    pub name: String,
+    pub path: String,
+    pub languages: Vec<String>,
+    pub file_count: usize,
+    pub symbol_count: usize,
+    pub dependencies: Vec<String>,
+    pub layer: ArchitecturalLayer,
+}
+
+/// Per-language statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LanguageStats {
+    pub file_count: usize,
+    pub line_count: usize,
+    pub symbol_count: usize,
+    pub function_count: usize,
+    pub class_count: usize,
 }
 
 /// A call relationship between two symbols
@@ -304,7 +593,11 @@ mod tests {
         used_sym.references.push(SymbolRef {
             file: "src/main.rs".to_string(),
             line: 10,
+            column: 0,
+            end_line: 10,
+            end_column: 0,
             context: "used_fn()".to_string(),
+            ref_kind: None,
         });
         snap.symbols.push(used_sym);
 

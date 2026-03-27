@@ -25,7 +25,10 @@ impl TreeSitterAnalyzer {
         let root = tree.root_node();
 
         let mut analysis = FileAnalysis::default();
-        self.extract_symbols(root, content, file_path, lang, &mut analysis);
+        analysis.language = Some(lang);
+        self.extract_symbols(root, content, file_path, lang, &mut analysis, None);
+        // Collect references: scan all identifiers and match against known symbol names
+        self.collect_references(root, content, file_path, &mut analysis);
         Some(analysis)
     }
 
@@ -36,22 +39,33 @@ impl TreeSitterAnalyzer {
         file_path: &str,
         lang: mccp_core::Language,
         analysis: &mut FileAnalysis,
+        parent_sym_id: Option<&str>,
     ) {
-        let kind = node.kind();
-
         match lang {
             mccp_core::Language::Rust => self.extract_rust_symbols(node, source, file_path, analysis),
             mccp_core::Language::TypeScript | mccp_core::Language::JavaScript => {
-                self.extract_js_symbols(node, source, file_path, analysis)
+                self.extract_js_symbols(node, source, file_path, analysis, parent_sym_id)
             }
             mccp_core::Language::Python => {
-                self.extract_python_symbols(node, source, file_path, analysis)
+                self.extract_python_symbols(node, source, file_path, analysis, parent_sym_id)
+            }
+            mccp_core::Language::Java => {
+                self.extract_java_symbols(node, source, file_path, analysis, parent_sym_id)
+            }
+            mccp_core::Language::Go => {
+                self.extract_go_symbols(node, source, file_path, analysis)
+            }
+            mccp_core::Language::Kotlin => {
+                self.extract_kotlin_symbols(node, source, file_path, analysis, parent_sym_id)
+            }
+            mccp_core::Language::CSharp => {
+                self.extract_csharp_symbols(node, source, file_path, analysis, parent_sym_id)
             }
             _ => {
                 // Walk children for unsupported languages
                 for i in 0..node.child_count() {
                     if let Some(child) = node.child(i) {
-                        self.extract_symbols(child, source, file_path, lang, analysis);
+                        self.extract_symbols(child, source, file_path, lang, analysis, parent_sym_id);
                     }
                 }
             }
@@ -105,6 +119,8 @@ impl TreeSitterAnalyzer {
                     );
                     sym.visibility = vis;
                     sym.doc_comment = doc;
+                    sym.annotations = self.extract_rust_attributes(&node, source);
+                    sym = sym.with_language("rust");
                     analysis.symbols.push(sym);
                 }
             }
@@ -120,6 +136,8 @@ impl TreeSitterAnalyzer {
                         node.end_position().row as u32 + 1,
                     );
                     sym.visibility = vis;
+                    sym.annotations = self.extract_rust_attributes(&node, source);
+                    sym = sym.with_language("rust");
                     analysis.symbols.push(sym);
                 }
             }
@@ -242,6 +260,7 @@ impl TreeSitterAnalyzer {
         source: &str,
         file_path: &str,
         analysis: &mut FileAnalysis,
+        _parent_sym_id: Option<&str>,
     ) {
         let kind = node.kind();
         match kind {
@@ -296,7 +315,7 @@ impl TreeSitterAnalyzer {
 
         for i in 0..node.child_count() {
             if let Some(child) = node.child(i) {
-                self.extract_js_symbols(child, source, file_path, analysis);
+                self.extract_js_symbols(child, source, file_path, analysis, _parent_sym_id);
             }
         }
     }
@@ -332,6 +351,7 @@ impl TreeSitterAnalyzer {
         source: &str,
         file_path: &str,
         analysis: &mut FileAnalysis,
+        _parent_sym_id: Option<&str>,
     ) {
         let kind = node.kind();
         match kind {
@@ -384,7 +404,7 @@ impl TreeSitterAnalyzer {
 
         for i in 0..node.child_count() {
             if let Some(child) = node.child(i) {
-                self.extract_python_symbols(child, source, file_path, analysis);
+                self.extract_python_symbols(child, source, file_path, analysis, _parent_sym_id);
             }
         }
     }
@@ -457,6 +477,985 @@ impl TreeSitterAnalyzer {
             Some(comments.join("\n"))
         }
     }
+
+    /// Extract Rust #[...] attributes as annotations
+    fn extract_rust_attributes(&self, node: &Node, source: &str) -> Vec<Annotation> {
+        let mut annotations = Vec::new();
+        let mut prev = node.prev_sibling();
+        while let Some(sib) = prev {
+            if sib.kind() == "attribute_item" {
+                let text = node_text(sib, source);
+                // Parse #[derive(Debug, Clone, Serialize)] etc
+                let inner = text.trim_start_matches("#[").trim_end_matches(']');
+                if inner.starts_with("derive(") {
+                    let derives = inner
+                        .trim_start_matches("derive(")
+                        .trim_end_matches(')')
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>();
+                    annotations.push(Annotation {
+                        name: "derive".to_string(),
+                        arguments: derives,
+                        line: sib.start_position().row as u32 + 1,
+                    });
+                } else {
+                    let name = inner.split('(').next().unwrap_or(inner).to_string();
+                    let args = if inner.contains('(') {
+                        inner.split_once('(')
+                            .and_then(|(_, rest)| rest.strip_suffix(')'))
+                            .unwrap_or("")
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    annotations.push(Annotation {
+                        name,
+                        arguments: args,
+                        line: sib.start_position().row as u32 + 1,
+                    });
+                }
+            } else if sib.kind() == "line_comment" || sib.kind() == "block_comment" {
+                // skip comments
+            } else {
+                break;
+            }
+            prev = sib.prev_sibling();
+        }
+        annotations.reverse();
+        annotations
+    }
+
+    // ── Reference collection ──────────────────────────────────────────
+
+    /// Scan all identifiers in the file and record references to known symbols
+    fn collect_references(
+        &self,
+        root: Node,
+        source: &str,
+        file_path: &str,
+        analysis: &mut FileAnalysis,
+    ) {
+        // Build set of known symbol names for quick lookup
+        let known: HashMap<String, String> = analysis
+            .symbols
+            .iter()
+            .map(|s| (s.name.clone(), s.id.clone()))
+            .collect();
+
+        self.walk_identifiers(root, source, file_path, &known, analysis);
+    }
+
+    fn walk_identifiers(
+        &self,
+        node: Node,
+        source: &str,
+        file_path: &str,
+        known: &HashMap<String, String>,
+        analysis: &mut FileAnalysis,
+    ) {
+        let kind = node.kind();
+        // Identifier nodes that might be references
+        if kind == "identifier" || kind == "type_identifier" || kind == "field_identifier" {
+            let name = node_text(node, source);
+            if let Some(sym_id) = known.get(&name) {
+                // Don't record definition site as a reference
+                let line = node.start_position().row as u32 + 1;
+                let col = node.start_position().column as u32;
+                let is_def = analysis.symbols.iter().any(|s| {
+                    s.id == *sym_id && s.file == file_path && s.start_line == line && s.start_column == col
+                });
+                if !is_def {
+                    // Find corresponding symbol and add reference
+                    if let Some(sym) = analysis.symbols.iter_mut().find(|s| s.id == *sym_id) {
+                        sym.references.push(SymbolRef {
+                            file: file_path.to_string(),
+                            line,
+                            column: col,
+                            end_line: node.end_position().row as u32 + 1,
+                            end_column: node.end_position().column as u32,
+                            context: get_line_context(source, line as usize),
+                            ref_kind: Some(infer_ref_kind(node).to_string()),
+                        });
+                    }
+                }
+            }
+        }
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                self.walk_identifiers(child, source, file_path, known, analysis);
+            }
+        }
+    }
+
+    // ── Java extractor ────────────────────────────────────────────────
+
+    fn extract_java_symbols(
+        &self,
+        node: Node,
+        source: &str,
+        file_path: &str,
+        analysis: &mut FileAnalysis,
+        parent_sym_id: Option<&str>,
+    ) {
+        let kind = node.kind();
+        match kind {
+            "class_declaration" | "interface_declaration" | "enum_declaration" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = node_text(name_node, source);
+                    let sk = match kind {
+                        "interface_declaration" => SymbolKind::Interface,
+                        "enum_declaration" => SymbolKind::Enum,
+                        _ => SymbolKind::Class,
+                    };
+                    let mut sym = SymbolDef::new(
+                        name.clone(),
+                        sk,
+                        file_path.to_string(),
+                        node.start_position().row as u32 + 1,
+                        node.end_position().row as u32 + 1,
+                    );
+                    sym = sym
+                        .with_columns(node.start_position().column as u32, node.end_position().column as u32)
+                        .with_language("java");
+                    sym.visibility = self.java_visibility(&node, source);
+                    sym.doc_comment = self.preceding_javadoc(&node, source);
+                    sym.annotations = self.extract_annotation_nodes(&node, source);
+                    if let Some(pid) = parent_sym_id {
+                        sym = sym.with_parent(pid.to_string());
+                    }
+                    let sym_id = sym.id.clone();
+                    // Detect Lombok codegen
+                    self.detect_lombok_codegen(&sym, file_path, analysis);
+                    analysis.symbols.push(sym);
+
+                    // Recurse into body for methods, inner classes
+                    if let Some(body) = node.child_by_field_name("body") {
+                        for i in 0..body.child_count() {
+                            if let Some(child) = body.child(i) {
+                                self.extract_java_symbols(child, source, file_path, analysis, Some(&sym_id));
+                            }
+                        }
+                    }
+                    return; // don't recurse again below
+                }
+            }
+            "method_declaration" | "constructor_declaration" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = node_text(name_node, source);
+                    let sk = if kind == "constructor_declaration" { SymbolKind::Function } else { SymbolKind::Method };
+                    let mut sym = SymbolDef::new(
+                        name.clone(),
+                        sk,
+                        file_path.to_string(),
+                        node.start_position().row as u32 + 1,
+                        node.end_position().row as u32 + 1,
+                    );
+                    sym = sym
+                        .with_columns(node.start_position().column as u32, node.end_position().column as u32)
+                        .with_language("java");
+                    sym.visibility = self.java_visibility(&node, source);
+                    sym.doc_comment = self.preceding_javadoc(&node, source);
+                    sym.annotations = self.extract_annotation_nodes(&node, source);
+                    sym.signature = Some(self.extract_java_signature(&node, source));
+                    if let Some(pid) = parent_sym_id {
+                        sym = sym.with_parent(pid.to_string());
+                        sym.qualified_name = Some(format!("{}.{}", pid.split("::").nth(1).unwrap_or(""), name));
+                    }
+                    let sym_id = sym.id.clone();
+                    analysis.symbols.push(sym);
+
+                    // Extract calls from method body
+                    if let Some(body) = node.child_by_field_name("body") {
+                        self.extract_generic_calls(body, source, file_path, &sym_id, analysis);
+                    }
+                    return;
+                }
+            }
+            "field_declaration" => {
+                // Extract field names
+                for i in 0..node.child_count() {
+                    if let Some(child) = node.child(i) {
+                        if child.kind() == "variable_declarator" {
+                            if let Some(name_node) = child.child_by_field_name("name") {
+                                let name = node_text(name_node, source);
+                                let mut sym = SymbolDef::new(
+                                    name,
+                                    SymbolKind::Variable,
+                                    file_path.to_string(),
+                                    node.start_position().row as u32 + 1,
+                                    node.end_position().row as u32 + 1,
+                                );
+                                sym = sym.with_language("java");
+                                sym.visibility = self.java_visibility(&node, source);
+                                sym.annotations = self.extract_annotation_nodes(&node, source);
+                                if let Some(pid) = parent_sym_id {
+                                    sym = sym.with_parent(pid.to_string());
+                                }
+                                analysis.symbols.push(sym);
+                            }
+                        }
+                    }
+                }
+                return;
+            }
+            "import_declaration" => {
+                let text = node_text(node, source);
+                let path = text
+                    .trim_start_matches("import ")
+                    .trim_start_matches("static ")
+                    .trim_end_matches(';')
+                    .trim()
+                    .to_string();
+                analysis.import_edges.push(ImportEdge {
+                    from_file: file_path.to_string(),
+                    to_file: path,
+                    symbol: None,
+                });
+                return;
+            }
+            "annotation" => {
+                // Annotations are extracted as part of parent nodes
+                return;
+            }
+            _ => {}
+        }
+
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                self.extract_java_symbols(child, source, file_path, analysis, parent_sym_id);
+            }
+        }
+    }
+
+    // ── Go extractor ──────────────────────────────────────────────────
+
+    fn extract_go_symbols(
+        &self,
+        node: Node,
+        source: &str,
+        file_path: &str,
+        analysis: &mut FileAnalysis,
+    ) {
+        let kind = node.kind();
+        match kind {
+            "function_declaration" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = node_text(name_node, source);
+                    let vis = if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                        Visibility::Public
+                    } else {
+                        Visibility::Private
+                    };
+                    let mut sym = SymbolDef::new(
+                        name,
+                        SymbolKind::Function,
+                        file_path.to_string(),
+                        node.start_position().row as u32 + 1,
+                        node.end_position().row as u32 + 1,
+                    );
+                    sym = sym
+                        .with_columns(node.start_position().column as u32, node.end_position().column as u32)
+                        .with_language("go");
+                    sym.visibility = vis;
+                    sym.doc_comment = self.preceding_go_comment(&node, source);
+                    let sym_id = sym.id.clone();
+                    analysis.symbols.push(sym);
+
+                    if let Some(body) = node.child_by_field_name("body") {
+                        self.extract_generic_calls(body, source, file_path, &sym_id, analysis);
+                    }
+                }
+            }
+            "method_declaration" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = node_text(name_node, source);
+                    let vis = if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                        Visibility::Public
+                    } else {
+                        Visibility::Private
+                    };
+                    let mut sym = SymbolDef::new(
+                        name,
+                        SymbolKind::Method,
+                        file_path.to_string(),
+                        node.start_position().row as u32 + 1,
+                        node.end_position().row as u32 + 1,
+                    );
+                    sym = sym
+                        .with_columns(node.start_position().column as u32, node.end_position().column as u32)
+                        .with_language("go");
+                    sym.visibility = vis;
+                    sym.doc_comment = self.preceding_go_comment(&node, source);
+                    let sym_id = sym.id.clone();
+                    analysis.symbols.push(sym);
+
+                    if let Some(body) = node.child_by_field_name("body") {
+                        self.extract_generic_calls(body, source, file_path, &sym_id, analysis);
+                    }
+                }
+            }
+            "type_declaration" => {
+                // Go type declarations: type Foo struct { ... } or type Foo interface { ... }
+                for i in 0..node.child_count() {
+                    if let Some(child) = node.child(i) {
+                        if child.kind() == "type_spec" {
+                            if let Some(name_node) = child.child_by_field_name("name") {
+                                let name = node_text(name_node, source);
+                                let vis = if name.chars().next().map(|c| c.is_uppercase()).unwrap_or(false) {
+                                    Visibility::Public
+                                } else {
+                                    Visibility::Private
+                                };
+                                // Determine if struct or interface
+                                let sk = child.child_by_field_name("type")
+                                    .map(|t| match t.kind() {
+                                        "struct_type" => SymbolKind::Struct,
+                                        "interface_type" => SymbolKind::Interface,
+                                        _ => SymbolKind::TypeAlias,
+                                    })
+                                    .unwrap_or(SymbolKind::TypeAlias);
+                                let mut sym = SymbolDef::new(
+                                    name,
+                                    sk,
+                                    file_path.to_string(),
+                                    child.start_position().row as u32 + 1,
+                                    child.end_position().row as u32 + 1,
+                                );
+                                sym = sym.with_language("go");
+                                sym.visibility = vis;
+                                sym.doc_comment = self.preceding_go_comment(&node, source);
+                                analysis.symbols.push(sym);
+                            }
+                        }
+                    }
+                }
+            }
+            "import_declaration" => {
+                // Go imports
+                for i in 0..node.child_count() {
+                    if let Some(child) = node.child(i) {
+                        if child.kind() == "import_spec" || child.kind() == "interpreted_string_literal" {
+                            let path = node_text(child, source).trim_matches('"').to_string();
+                            if !path.is_empty() {
+                                analysis.import_edges.push(ImportEdge {
+                                    from_file: file_path.to_string(),
+                                    to_file: path,
+                                    symbol: None,
+                                });
+                            }
+                        } else if child.kind() == "import_spec_list" {
+                            for j in 0..child.child_count() {
+                                if let Some(spec) = child.child(j) {
+                                    if let Some(path_node) = spec.child_by_field_name("path") {
+                                        let path = node_text(path_node, source).trim_matches('"').to_string();
+                                        if !path.is_empty() {
+                                            analysis.import_edges.push(ImportEdge {
+                                                from_file: file_path.to_string(),
+                                                to_file: path,
+                                                symbol: None,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        // Recurse for non-handled nodes
+        if kind != "function_declaration" && kind != "method_declaration" {
+            for i in 0..node.child_count() {
+                if let Some(child) = node.child(i) {
+                    self.extract_go_symbols(child, source, file_path, analysis);
+                }
+            }
+        }
+    }
+
+    // ── Kotlin extractor ──────────────────────────────────────────────
+
+    fn extract_kotlin_symbols(
+        &self,
+        node: Node,
+        source: &str,
+        file_path: &str,
+        analysis: &mut FileAnalysis,
+        parent_sym_id: Option<&str>,
+    ) {
+        let kind = node.kind();
+        match kind {
+            "class_declaration" | "object_declaration" => {
+                if let Some(name_node) = node.child_by_field_name("name")
+                    .or_else(|| find_child_by_kind(&node, "type_identifier"))
+                    .or_else(|| find_child_by_kind(&node, "simple_identifier"))
+                {
+                    let name = node_text(name_node, source);
+                    let sk = if kind == "object_declaration" { SymbolKind::Class } else { SymbolKind::Class };
+                    let mut sym = SymbolDef::new(
+                        name.clone(),
+                        sk,
+                        file_path.to_string(),
+                        node.start_position().row as u32 + 1,
+                        node.end_position().row as u32 + 1,
+                    );
+                    sym = sym.with_language("kotlin");
+                    sym.visibility = self.kotlin_visibility(&node, source);
+                    sym.annotations = self.extract_kotlin_annotations(&node, source);
+                    if let Some(pid) = parent_sym_id {
+                        sym = sym.with_parent(pid.to_string());
+                    }
+                    // Detect Kotlin data class codegen
+                    let full_text = node_text(node, source);
+                    if full_text.starts_with("data class") {
+                        analysis.codegen_patterns.push(CodegenPattern {
+                            file: file_path.to_string(),
+                            line: node.start_position().row as u32 + 1,
+                            pattern_type: CodegenType::KotlinDataClass,
+                            generated_members: vec![
+                                "equals".to_string(), "hashCode".to_string(),
+                                "toString".to_string(), "copy".to_string(),
+                                "componentN".to_string(),
+                            ],
+                            source_annotation: "data class".to_string(),
+                        });
+                    }
+                    let sym_id = sym.id.clone();
+                    analysis.symbols.push(sym);
+
+                    if let Some(body) = node.child_by_field_name("class_body")
+                        .or_else(|| find_child_by_kind(&node, "class_body"))
+                    {
+                        for i in 0..body.child_count() {
+                            if let Some(child) = body.child(i) {
+                                self.extract_kotlin_symbols(child, source, file_path, analysis, Some(&sym_id));
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
+            "function_declaration" => {
+                if let Some(name_node) = node.child_by_field_name("name")
+                    .or_else(|| find_child_by_kind(&node, "simple_identifier"))
+                {
+                    let name = node_text(name_node, source);
+                    let sk = if parent_sym_id.is_some() { SymbolKind::Method } else { SymbolKind::Function };
+                    let mut sym = SymbolDef::new(
+                        name,
+                        sk,
+                        file_path.to_string(),
+                        node.start_position().row as u32 + 1,
+                        node.end_position().row as u32 + 1,
+                    );
+                    sym = sym.with_language("kotlin");
+                    sym.visibility = self.kotlin_visibility(&node, source);
+                    sym.annotations = self.extract_kotlin_annotations(&node, source);
+                    if let Some(pid) = parent_sym_id {
+                        sym = sym.with_parent(pid.to_string());
+                    }
+                    let sym_id = sym.id.clone();
+                    analysis.symbols.push(sym);
+
+                    if let Some(body) = node.child_by_field_name("function_body") {
+                        self.extract_generic_calls(body, source, file_path, &sym_id, analysis);
+                    }
+                    return;
+                }
+            }
+            "property_declaration" => {
+                // Extract property name from variable_declaration > simple_identifier, or direct simple_identifier
+                let name_str = find_child_by_kind(&node, "simple_identifier")
+                    .map(|n| node_text(n, source))
+                    .or_else(|| {
+                        for i in 0..node.child_count() {
+                            if let Some(child) = node.child(i) {
+                                if child.kind() == "variable_declaration" {
+                                    if let Some(id) = find_child_by_kind(&child, "simple_identifier") {
+                                        return Some(node_text(id, source));
+                                    }
+                                }
+                            }
+                        }
+                        None
+                    });
+                if let Some(name) = name_str {
+                    let mut sym = SymbolDef::new(
+                        name,
+                        SymbolKind::Variable,
+                        file_path.to_string(),
+                        node.start_position().row as u32 + 1,
+                        node.end_position().row as u32 + 1,
+                    );
+                    sym = sym.with_language("kotlin");
+                    if let Some(pid) = parent_sym_id {
+                        sym = sym.with_parent(pid.to_string());
+                    }
+                    analysis.symbols.push(sym);
+                }
+            }
+            "import_header" | "import_list" => {
+                let text = node_text(node, source);
+                for line in text.lines() {
+                    let line = line.trim();
+                    if line.starts_with("import ") {
+                        let path = line.trim_start_matches("import ").trim().to_string();
+                        analysis.import_edges.push(ImportEdge {
+                            from_file: file_path.to_string(),
+                            to_file: path,
+                            symbol: None,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                self.extract_kotlin_symbols(child, source, file_path, analysis, parent_sym_id);
+            }
+        }
+    }
+
+    // ── C# extractor ─────────────────────────────────────────────────
+
+    fn extract_csharp_symbols(
+        &self,
+        node: Node,
+        source: &str,
+        file_path: &str,
+        analysis: &mut FileAnalysis,
+        parent_sym_id: Option<&str>,
+    ) {
+        let kind = node.kind();
+        match kind {
+            "class_declaration" | "interface_declaration" | "struct_declaration"
+            | "enum_declaration" | "record_declaration" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = node_text(name_node, source);
+                    let sk = match kind {
+                        "interface_declaration" => SymbolKind::Interface,
+                        "struct_declaration" => SymbolKind::Struct,
+                        "enum_declaration" => SymbolKind::Enum,
+                        "record_declaration" => {
+                            analysis.codegen_patterns.push(CodegenPattern {
+                                file: file_path.to_string(),
+                                line: node.start_position().row as u32 + 1,
+                                pattern_type: CodegenType::CSharpRecord,
+                                generated_members: vec![
+                                    "Equals".to_string(), "GetHashCode".to_string(),
+                                    "ToString".to_string(), "Deconstruct".to_string(),
+                                ],
+                                source_annotation: "record".to_string(),
+                            });
+                            SymbolKind::Class
+                        }
+                        _ => SymbolKind::Class,
+                    };
+                    let mut sym = SymbolDef::new(
+                        name.clone(),
+                        sk,
+                        file_path.to_string(),
+                        node.start_position().row as u32 + 1,
+                        node.end_position().row as u32 + 1,
+                    );
+                    sym = sym.with_language("csharp");
+                    sym.visibility = self.csharp_visibility(&node, source);
+                    sym.annotations = self.extract_csharp_attributes(&node, source);
+                    if let Some(pid) = parent_sym_id {
+                        sym = sym.with_parent(pid.to_string());
+                    }
+                    let sym_id = sym.id.clone();
+                    analysis.symbols.push(sym);
+
+                    if let Some(body) = node.child_by_field_name("body")
+                        .or_else(|| find_child_by_kind(&node, "declaration_list"))
+                    {
+                        for i in 0..body.child_count() {
+                            if let Some(child) = body.child(i) {
+                                self.extract_csharp_symbols(child, source, file_path, analysis, Some(&sym_id));
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
+            "method_declaration" | "constructor_declaration" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = node_text(name_node, source);
+                    let mut sym = SymbolDef::new(
+                        name,
+                        SymbolKind::Method,
+                        file_path.to_string(),
+                        node.start_position().row as u32 + 1,
+                        node.end_position().row as u32 + 1,
+                    );
+                    sym = sym.with_language("csharp");
+                    sym.visibility = self.csharp_visibility(&node, source);
+                    sym.annotations = self.extract_csharp_attributes(&node, source);
+                    if let Some(pid) = parent_sym_id {
+                        sym = sym.with_parent(pid.to_string());
+                    }
+                    let sym_id = sym.id.clone();
+                    analysis.symbols.push(sym);
+
+                    if let Some(body) = node.child_by_field_name("body") {
+                        self.extract_generic_calls(body, source, file_path, &sym_id, analysis);
+                    }
+                    return;
+                }
+            }
+            "property_declaration" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = node_text(name_node, source);
+                    let mut sym = SymbolDef::new(
+                        name,
+                        SymbolKind::Variable,
+                        file_path.to_string(),
+                        node.start_position().row as u32 + 1,
+                        node.end_position().row as u32 + 1,
+                    );
+                    sym = sym.with_language("csharp");
+                    if let Some(pid) = parent_sym_id {
+                        sym = sym.with_parent(pid.to_string());
+                    }
+                    analysis.symbols.push(sym);
+                }
+            }
+            "namespace_declaration" => {
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    let name = node_text(name_node, source);
+                    let mut sym = SymbolDef::new(
+                        name,
+                        SymbolKind::Module,
+                        file_path.to_string(),
+                        node.start_position().row as u32 + 1,
+                        node.end_position().row as u32 + 1,
+                    );
+                    sym = sym.with_language("csharp");
+                    let sym_id = sym.id.clone();
+                    analysis.symbols.push(sym);
+
+                    if let Some(body) = node.child_by_field_name("body")
+                        .or_else(|| find_child_by_kind(&node, "declaration_list"))
+                    {
+                        for i in 0..body.child_count() {
+                            if let Some(child) = body.child(i) {
+                                self.extract_csharp_symbols(child, source, file_path, analysis, Some(&sym_id));
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
+            "using_directive" => {
+                let text = node_text(node, source);
+                let path = text
+                    .trim_start_matches("using ")
+                    .trim_start_matches("static ")
+                    .trim_end_matches(';')
+                    .trim()
+                    .to_string();
+                analysis.import_edges.push(ImportEdge {
+                    from_file: file_path.to_string(),
+                    to_file: path,
+                    symbol: None,
+                });
+                return;
+            }
+            _ => {}
+        }
+
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                self.extract_csharp_symbols(child, source, file_path, analysis, parent_sym_id);
+            }
+        }
+    }
+
+    // ── Helper methods for language-specific features ─────────────────
+
+    fn extract_generic_calls(
+        &self,
+        node: Node,
+        source: &str,
+        file_path: &str,
+        caller_id: &str,
+        analysis: &mut FileAnalysis,
+    ) {
+        let kind = node.kind();
+        if kind == "call_expression" || kind == "method_invocation" || kind == "invocation_expression" {
+            // Try function field, then name field, else first child
+            let callee_name = node.child_by_field_name("function")
+                .or_else(|| node.child_by_field_name("name"))
+                .or_else(|| node.child(0))
+                .map(|n| node_text(n, source))
+                .unwrap_or_default();
+            if !callee_name.is_empty() {
+                analysis.call_edges.push(CallEdge {
+                    caller: caller_id.to_string(),
+                    callee: callee_name,
+                });
+            }
+        }
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                self.extract_generic_calls(child, source, file_path, caller_id, analysis);
+            }
+        }
+    }
+
+    fn java_visibility(&self, node: &Node, source: &str) -> Visibility {
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                if child.kind() == "modifiers" {
+                    let text = node_text(child, source);
+                    if text.contains("public") { return Visibility::Public; }
+                    if text.contains("private") { return Visibility::Private; }
+                    if text.contains("protected") { return Visibility::Super; }
+                }
+            }
+        }
+        Visibility::Private // package-private
+    }
+
+    fn kotlin_visibility(&self, node: &Node, source: &str) -> Visibility {
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                if child.kind() == "modifiers" || child.kind() == "visibility_modifier" {
+                    let text = node_text(child, source);
+                    if text.contains("public") { return Visibility::Public; }
+                    if text.contains("private") { return Visibility::Private; }
+                    if text.contains("internal") { return Visibility::Crate; }
+                    if text.contains("protected") { return Visibility::Super; }
+                }
+            }
+        }
+        Visibility::Public // Kotlin default is public
+    }
+
+    fn csharp_visibility(&self, node: &Node, source: &str) -> Visibility {
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                let kind = child.kind();
+                if kind == "modifier" || kind.contains("modifier") {
+                    let text = node_text(child, source);
+                    if text.contains("public") { return Visibility::Public; }
+                    if text.contains("private") { return Visibility::Private; }
+                    if text.contains("internal") { return Visibility::Crate; }
+                    if text.contains("protected") { return Visibility::Super; }
+                }
+            }
+        }
+        Visibility::Private
+    }
+
+    fn extract_java_signature(&self, node: &Node, source: &str) -> String {
+        // Get parameters and return type
+        let mut sig = String::new();
+        if let Some(ret) = node.child_by_field_name("type") {
+            sig.push_str(&node_text(ret, source));
+            sig.push(' ');
+        }
+        if let Some(name) = node.child_by_field_name("name") {
+            sig.push_str(&node_text(name, source));
+        }
+        if let Some(params) = node.child_by_field_name("parameters") {
+            sig.push_str(&node_text(params, source));
+        }
+        sig
+    }
+
+    fn preceding_javadoc(&self, node: &Node, source: &str) -> Option<String> {
+        let mut prev = node.prev_sibling();
+        while let Some(sib) = prev {
+            let kind = sib.kind();
+            if kind == "block_comment" || kind == "line_comment" {
+                let text = node_text(sib, source);
+                if text.starts_with("/**") || text.starts_with("//") {
+                    return Some(text);
+                }
+            } else if kind == "annotation" || kind == "marker_annotation" {
+                prev = sib.prev_sibling();
+                continue;
+            } else {
+                break;
+            }
+            prev = sib.prev_sibling();
+        }
+        None
+    }
+
+    fn preceding_go_comment(&self, node: &Node, source: &str) -> Option<String> {
+        let mut comments = Vec::new();
+        let mut prev = node.prev_sibling();
+        while let Some(sib) = prev {
+            if sib.kind() == "comment" {
+                let text = node_text(sib, source);
+                comments.push(text.trim_start_matches("//").trim().to_string());
+            } else {
+                break;
+            }
+            prev = sib.prev_sibling();
+        }
+        if comments.is_empty() { None } else {
+            comments.reverse();
+            Some(comments.join("\n"))
+        }
+    }
+
+    fn extract_annotation_nodes(&self, node: &Node, source: &str) -> Vec<Annotation> {
+        let mut annotations = Vec::new();
+        // Look at preceding siblings for annotations
+        let mut prev = node.prev_sibling();
+        while let Some(sib) = prev {
+            let kind = sib.kind();
+            if kind == "annotation" || kind == "marker_annotation" {
+                let text = node_text(sib, source);
+                let name = text.trim_start_matches('@').split('(').next().unwrap_or("").to_string();
+                let args: Vec<String> = if text.contains('(') {
+                    text.split_once('(')
+                        .and_then(|(_, rest)| rest.strip_suffix(')'))
+                        .unwrap_or("")
+                        .split(',')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                annotations.push(Annotation {
+                    name,
+                    arguments: args,
+                    line: sib.start_position().row as u32 + 1,
+                });
+            } else if kind == "line_comment" || kind == "block_comment" {
+                // skip comments
+            } else {
+                break;
+            }
+            prev = sib.prev_sibling();
+        }
+        annotations.reverse();
+        annotations
+    }
+
+    fn extract_kotlin_annotations(&self, node: &Node, source: &str) -> Vec<Annotation> {
+        let mut annotations = Vec::new();
+        // Kotlin annotations can be in modifiers child
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                if child.kind() == "modifiers" {
+                    for j in 0..child.child_count() {
+                        if let Some(annot) = child.child(j) {
+                            if annot.kind() == "annotation" {
+                                let text = node_text(annot, source);
+                                let name = text.trim_start_matches('@')
+                                    .split('(').next().unwrap_or("").to_string();
+                                annotations.push(Annotation {
+                                    name,
+                                    arguments: Vec::new(),
+                                    line: annot.start_position().row as u32 + 1,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Also check preceding siblings
+        let mut prev = node.prev_sibling();
+        while let Some(sib) = prev {
+            if sib.kind() == "annotation" {
+                let text = node_text(sib, source);
+                let name = text.trim_start_matches('@').split('(').next().unwrap_or("").to_string();
+                annotations.push(Annotation {
+                    name,
+                    arguments: Vec::new(),
+                    line: sib.start_position().row as u32 + 1,
+                });
+            } else if sib.kind() == "comment" || sib.kind() == "multiline_comment" {
+                // skip
+            } else {
+                break;
+            }
+            prev = sib.prev_sibling();
+        }
+        annotations
+    }
+
+    fn extract_csharp_attributes(&self, node: &Node, source: &str) -> Vec<Annotation> {
+        let mut annotations = Vec::new();
+        // C# attributes in [Attribute] syntax
+        let mut prev = node.prev_sibling();
+        while let Some(sib) = prev {
+            if sib.kind() == "attribute_list" {
+                let text = node_text(sib, source);
+                let inner = text.trim_start_matches('[').trim_end_matches(']');
+                for attr in inner.split(',') {
+                    let name = attr.trim().split('(').next().unwrap_or("").to_string();
+                    if !name.is_empty() {
+                        annotations.push(Annotation {
+                            name,
+                            arguments: Vec::new(),
+                            line: sib.start_position().row as u32 + 1,
+                        });
+                    }
+                }
+            } else if sib.kind() == "comment" {
+                // skip
+            } else {
+                break;
+            }
+            prev = sib.prev_sibling();
+        }
+        annotations
+    }
+
+    /// Detect Lombok codegen patterns on Java classes
+    fn detect_lombok_codegen(
+        &self,
+        sym: &SymbolDef,
+        file_path: &str,
+        analysis: &mut FileAnalysis,
+    ) {
+        let lombok_annotations = [
+            ("Data", vec!["getters", "setters", "equals", "hashCode", "toString"]),
+            ("Builder", vec!["builder()", "build()"]),
+            ("Getter", vec!["getters for all fields"]),
+            ("Setter", vec!["setters for all fields"]),
+            ("NoArgsConstructor", vec!["no-args constructor"]),
+            ("AllArgsConstructor", vec!["all-args constructor"]),
+            ("RequiredArgsConstructor", vec!["required-args constructor"]),
+            ("Value", vec!["getters", "equals", "hashCode", "toString", "final fields"]),
+            ("ToString", vec!["toString()"]),
+            ("EqualsAndHashCode", vec!["equals()", "hashCode()"]),
+            ("Slf4j", vec!["log field"]),
+            ("Log", vec!["log field"]),
+        ];
+
+        for annot in &sym.annotations {
+            for (lombok_name, generated) in &lombok_annotations {
+                if annot.name == *lombok_name {
+                    analysis.codegen_patterns.push(CodegenPattern {
+                        file: file_path.to_string(),
+                        line: annot.line,
+                        pattern_type: CodegenType::Lombok,
+                        generated_members: generated.iter().map(|s| s.to_string()).collect(),
+                        source_annotation: format!("@{}", lombok_name),
+                    });
+                }
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -478,40 +1477,62 @@ impl CodeAnalyzer for TreeSitterAnalyzer {
         let mut snapshot = CodeIntelSnapshot::new(project_id);
 
         let files = collect_source_files(project_root);
-        for file_path in files {
+        let mut language_file_counts: HashMap<String, usize> = HashMap::new();
+        let mut language_line_counts: HashMap<String, usize> = HashMap::new();
+
+        for file_path in &files {
             let relative = file_path
                 .strip_prefix(project_root)
-                .unwrap_or(&file_path)
+                .unwrap_or(file_path)
                 .to_string_lossy()
                 .to_string();
 
-            if let Ok(content) = std::fs::read_to_string(&file_path) {
+            if let Ok(content) = std::fs::read_to_string(file_path) {
                 let ext = file_path
                     .extension()
                     .and_then(|e| e.to_str())
                     .unwrap_or("");
                 if let Some(lang) = mccp_core::Language::from_extension(ext) {
+                    let lang_name = lang.to_string();
+                    *language_file_counts.entry(lang_name.clone()).or_insert(0) += 1;
+                    *language_line_counts.entry(lang_name).or_insert(0) += content.lines().count();
+
                     if let Some(analysis) = self.analyze_file(&relative, &content, lang) {
                         snapshot.symbols.extend(analysis.symbols);
                         snapshot.call_edges.extend(analysis.call_edges);
                         snapshot.use_edges.extend(analysis.use_edges);
                         snapshot.import_edges.extend(analysis.import_edges);
+                        snapshot.codegen_patterns.extend(analysis.codegen_patterns);
+                        snapshot.frameworks.extend(analysis.frameworks);
                     }
+
+                    // Detect frameworks from file content
+                    detect_frameworks(&relative, &content, &mut snapshot.frameworks);
                 }
             }
         }
+
+        // Build project structure
+        snapshot.structure = Some(build_project_structure(
+            project_root,
+            &snapshot.symbols,
+            &snapshot.import_edges,
+            &language_file_counts,
+            &language_line_counts,
+        ));
+
+        // Detect execution flows
+        snapshot.flows = detect_execution_flows(&snapshot.symbols, &snapshot.call_edges);
+
+        // Detect Rust derive codegen patterns
+        detect_rust_derive_codegen(&snapshot.symbols, &mut snapshot.codegen_patterns);
 
         Ok(snapshot)
     }
 
     fn supports_language(&self, lang: mccp_core::Language) -> bool {
-        matches!(
-            lang,
-            mccp_core::Language::Rust
-                | mccp_core::Language::TypeScript
-                | mccp_core::Language::JavaScript
-                | mccp_core::Language::Python
-        )
+        // Supports all languages that have tree-sitter grammars
+        get_ts_language(lang).is_some()
     }
 }
 
@@ -522,6 +1543,10 @@ struct FileAnalysis {
     call_edges: Vec<CallEdge>,
     use_edges: Vec<UseEdge>,
     import_edges: Vec<ImportEdge>,
+    language: Option<mccp_core::Language>,
+    annotations: Vec<Annotation>,
+    codegen_patterns: Vec<CodegenPattern>,
+    frameworks: Vec<FrameworkInfo>,
 }
 
 fn node_text(node: Node, source: &str) -> String {
@@ -535,7 +1560,17 @@ fn get_ts_language(lang: mccp_core::Language) -> Option<TsLanguage> {
             Some(tree_sitter_typescript::language_typescript())
         }
         mccp_core::Language::Python => Some(tree_sitter_python::language()),
-        _ => None,
+        mccp_core::Language::Java => Some(tree_sitter_java::language()),
+        mccp_core::Language::Go => Some(tree_sitter_go::language()),
+        mccp_core::Language::C => Some(tree_sitter_c::language()),
+        mccp_core::Language::Cpp => Some(tree_sitter_cpp::language()),
+        mccp_core::Language::CSharp => Some(tree_sitter_c_sharp::language()),
+        mccp_core::Language::Ruby => Some(tree_sitter_ruby::language()),
+        mccp_core::Language::PHP => {
+            // tree-sitter-php has a version conflict; skip for now
+            None
+        }
+        mccp_core::Language::Kotlin => Some(tree_sitter_kotlin::language()),
     }
 }
 
@@ -571,6 +1606,402 @@ fn binary_exists(name: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// Find a child node by its kind
+fn find_child_by_kind<'a>(node: &'a Node<'a>, kind: &str) -> Option<Node<'a>> {
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if child.kind() == kind {
+                return Some(child);
+            }
+        }
+    }
+    None
+}
+
+/// Get the line content for a given line number (1-indexed)
+fn get_line_context(source: &str, line: usize) -> String {
+    source.lines().nth(line.saturating_sub(1)).unwrap_or("").trim().to_string()
+}
+
+/// Infer reference kind from surrounding AST context
+fn infer_ref_kind(node: Node) -> &'static str {
+    if let Some(parent) = node.parent() {
+        match parent.kind() {
+            "call_expression" | "method_invocation" | "invocation_expression" => "call",
+            "import_statement" | "use_declaration" | "import_declaration" | "using_directive" => "import",
+            "type_annotation" | "type_identifier" | "generic_type" => "type_annotation",
+            "assignment_expression" | "assignment_statement" => "assignment",
+            "field_expression" | "field_access" | "member_expression" => "field_access",
+            _ => "reference",
+        }
+    } else {
+        "reference"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Framework detection
+// ---------------------------------------------------------------------------
+
+/// Detect frameworks from file content and import patterns
+fn detect_frameworks(file_path: &str, content: &str, frameworks: &mut Vec<FrameworkInfo>) {
+    let patterns: &[(&str, Framework, &[&str])] = &[
+        // Java/Kotlin
+        ("org.springframework", Framework::SpringBoot, &["@RestController", "@Service", "@Repository", "@Component"]),
+        ("org.springframework.web", Framework::SpringMVC, &["@RequestMapping", "@GetMapping", "@PostMapping"]),
+        ("io.quarkus", Framework::Quarkus, &["@Path", "@GET", "@POST"]),
+        ("io.micronaut", Framework::Micronaut, &["@Controller", "@Get", "@Post"]),
+        // JS/TS
+        ("express", Framework::Express, &["app.get", "app.post", "app.use", "Router()"]),
+        ("@nestjs", Framework::NestJS, &["@Controller", "@Injectable", "@Module", "@Get", "@Post"]),
+        ("next", Framework::NextJS, &["getServerSideProps", "getStaticProps", "NextPage"]),
+        ("fastify", Framework::Fastify, &["fastify.get", "fastify.post"]),
+        // Python
+        ("django", Framework::Django, &["views.py", "models.py", "urls.py", "from django"]),
+        ("flask", Framework::Flask, &["@app.route", "Flask(__name__)"]),
+        ("fastapi", Framework::FastAPI, &["@app.get", "@app.post", "FastAPI()"]),
+        // Rust
+        ("actix_web", Framework::Actix, &["#[get", "#[post", "HttpServer", "web::get"]),
+        ("axum", Framework::Axum, &["Router::new", "axum::routing"]),
+        ("rocket", Framework::Rocket, &["#[get", "#[post", "#[launch]"]),
+        // Go
+        ("github.com/gin-gonic/gin", Framework::Gin, &["gin.Default", "gin.New"]),
+        ("github.com/labstack/echo", Framework::Echo, &["echo.New()"]),
+        ("github.com/gofiber/fiber", Framework::Fiber, &["fiber.New()"]),
+        // C#
+        ("Microsoft.AspNetCore", Framework::AspNetCore, &["[ApiController]", "[HttpGet]", "[HttpPost]"]),
+        // Kotlin
+        ("io.ktor", Framework::Ktor, &["routing {", "get(", "post("]),
+    ];
+
+    for (import_pattern, framework, content_patterns) in patterns {
+        if content.contains(import_pattern) {
+            let detected: Vec<String> = content_patterns.iter()
+                .filter(|p| content.contains(**p))
+                .map(|p| p.to_string())
+                .collect();
+            if !detected.is_empty() {
+                // Avoid duplicates
+                let already = frameworks.iter().any(|f| f.framework == *framework && f.file == file_path);
+                if !already {
+                    frameworks.push(FrameworkInfo {
+                        framework: framework.clone(),
+                        version: None,
+                        file: file_path.to_string(),
+                        detected_patterns: detected,
+                    });
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Execution flow detection
+// ---------------------------------------------------------------------------
+
+/// Detect execution flows by finding entry points and tracing call chains
+fn detect_execution_flows(symbols: &[SymbolDef], call_edges: &[CallEdge]) -> Vec<ExecutionFlow> {
+    let mut flows = Vec::new();
+
+    // Build a map from symbol names/ids to symbol defs for quick lookup
+    let sym_by_id: HashMap<&str, &SymbolDef> = symbols.iter()
+        .map(|s| (s.id.as_str(), s))
+        .collect();
+
+    // Find entry points: symbols with HTTP/route/CLI annotations
+    let entry_annotations = [
+        ("GetMapping", FlowType::HttpEndpoint),
+        ("PostMapping", FlowType::HttpEndpoint),
+        ("PutMapping", FlowType::HttpEndpoint),
+        ("DeleteMapping", FlowType::HttpEndpoint),
+        ("RequestMapping", FlowType::HttpEndpoint),
+        ("Get", FlowType::HttpEndpoint),
+        ("Post", FlowType::HttpEndpoint),
+        ("Put", FlowType::HttpEndpoint),
+        ("Delete", FlowType::HttpEndpoint),
+        ("Path", FlowType::HttpEndpoint),
+        ("ApiController", FlowType::HttpEndpoint),
+        ("HttpGet", FlowType::HttpEndpoint),
+        ("HttpPost", FlowType::HttpEndpoint),
+        ("Command", FlowType::CliCommand),
+        ("EventListener", FlowType::EventHandler),
+        ("Scheduled", FlowType::ScheduledTask),
+        ("KafkaListener", FlowType::MessageConsumer),
+        ("RabbitListener", FlowType::MessageConsumer),
+        ("WebSocketHandler", FlowType::WebSocket),
+    ];
+
+    for sym in symbols {
+        for (annot_name, flow_type) in &entry_annotations {
+            if sym.annotations.iter().any(|a| a.name == *annot_name) {
+                let mut steps = Vec::new();
+                let layer = infer_architectural_layer(sym);
+
+                steps.push(FlowStep {
+                    symbol_id: sym.id.clone(),
+                    file: sym.file.clone(),
+                    start_line: sym.start_line,
+                    end_line: sym.end_line,
+                    layer: layer.clone(),
+                    description: format!("{} entry: {}", layer.as_str(), sym.name),
+                    annotations: sym.annotations.iter().map(|a| a.name.clone()).collect(),
+                });
+
+                // Follow call chain
+                trace_call_chain(&sym.id, call_edges, &sym_by_id, &mut steps, 0, 10);
+
+                let flow_name = format!("{:?}::{}", flow_type, sym.name);
+                flows.push(ExecutionFlow {
+                    id: format!("flow::{}", sym.id),
+                    name: flow_name,
+                    flow_type: flow_type.clone(),
+                    steps,
+                    entry_file: sym.file.clone(),
+                    entry_line: sym.start_line,
+                });
+            }
+        }
+    }
+
+    flows
+}
+
+/// Trace a call chain from a symbol, building up flow steps
+fn trace_call_chain(
+    caller_id: &str,
+    call_edges: &[CallEdge],
+    sym_by_id: &HashMap<&str, &SymbolDef>,
+    steps: &mut Vec<FlowStep>,
+    depth: usize,
+    max_depth: usize,
+) {
+    if depth >= max_depth { return; }
+
+    let callees: Vec<&str> = call_edges.iter()
+        .filter(|e| e.caller == caller_id)
+        .map(|e| e.callee.as_str())
+        .collect();
+
+    for callee_name in callees {
+        // Try to find symbol by id or by name
+        let callee_sym = sym_by_id.get(callee_name)
+            .or_else(|| sym_by_id.values().find(|s| s.name == callee_name));
+
+        if let Some(sym) = callee_sym {
+            // Avoid cycles
+            if steps.iter().any(|s| s.symbol_id == sym.id) { continue; }
+
+            let layer = infer_architectural_layer(sym);
+            steps.push(FlowStep {
+                symbol_id: sym.id.clone(),
+                file: sym.file.clone(),
+                start_line: sym.start_line,
+                end_line: sym.end_line,
+                layer,
+                description: format!("calls {}", sym.name),
+                annotations: sym.annotations.iter().map(|a| a.name.clone()).collect(),
+            });
+
+            trace_call_chain(&sym.id, call_edges, sym_by_id, steps, depth + 1, max_depth);
+        }
+    }
+}
+
+/// Infer the architectural layer of a symbol from its name, annotations, and file path
+fn infer_architectural_layer(sym: &SymbolDef) -> ArchitecturalLayer {
+    let name_lower = sym.name.to_lowercase();
+    let file_lower = sym.file.to_lowercase();
+    let annots: Vec<String> = sym.annotations.iter().map(|a| a.name.to_lowercase()).collect();
+
+    // Check annotations first
+    if annots.iter().any(|a| a.contains("controller") || a == "restcontroller" || a == "apicontroller") {
+        return ArchitecturalLayer::Controller;
+    }
+    if annots.iter().any(|a| a == "service" || a == "injectable") {
+        return ArchitecturalLayer::Service;
+    }
+    if annots.iter().any(|a| a == "repository" || a.contains("repo")) {
+        return ArchitecturalLayer::Repository;
+    }
+    if annots.iter().any(|a| a == "entity" || a == "table" || a == "document") {
+        return ArchitecturalLayer::Model;
+    }
+    if annots.iter().any(|a| a == "middleware" || a == "filter" || a == "interceptor") {
+        return ArchitecturalLayer::Middleware;
+    }
+    if annots.iter().any(|a| a == "configuration" || a == "config") {
+        return ArchitecturalLayer::Config;
+    }
+
+    // Check file path patterns
+    if file_lower.contains("controller") || file_lower.contains("handler") || file_lower.contains("endpoint") {
+        if file_lower.contains("handler") { return ArchitecturalLayer::Handler; }
+        return ArchitecturalLayer::Controller;
+    }
+    if file_lower.contains("service") { return ArchitecturalLayer::Service; }
+    if file_lower.contains("repository") || file_lower.contains("repo") || file_lower.contains("dao") {
+        return ArchitecturalLayer::Repository;
+    }
+    if file_lower.contains("model") || file_lower.contains("entity") || file_lower.contains("dto") {
+        return ArchitecturalLayer::Model;
+    }
+    if file_lower.contains("middleware") || file_lower.contains("filter") {
+        return ArchitecturalLayer::Middleware;
+    }
+    if file_lower.contains("config") || file_lower.contains("setting") {
+        return ArchitecturalLayer::Config;
+    }
+    if file_lower.contains("route") || file_lower.contains("router") {
+        return ArchitecturalLayer::Router;
+    }
+    if file_lower.contains("interface") { return ArchitecturalLayer::Interface; }
+    if file_lower.contains("util") || file_lower.contains("helper") {
+        return ArchitecturalLayer::Utility;
+    }
+
+    // Check symbol name patterns
+    if name_lower.contains("controller") { return ArchitecturalLayer::Controller; }
+    if name_lower.contains("service") { return ArchitecturalLayer::Service; }
+    if name_lower.contains("repository") || name_lower.contains("repo") || name_lower.contains("dao") {
+        return ArchitecturalLayer::Repository;
+    }
+
+    ArchitecturalLayer::Unknown
+}
+
+// ---------------------------------------------------------------------------
+// Project structure analysis
+// ---------------------------------------------------------------------------
+
+/// Build a high-level project structure from analyzed symbols
+fn build_project_structure(
+    project_root: &Path,
+    symbols: &[SymbolDef],
+    imports: &[ImportEdge],
+    lang_file_counts: &HashMap<String, usize>,
+    lang_line_counts: &HashMap<String, usize>,
+) -> ProjectStructure {
+    // Group symbols by top-level directory (module)
+    let mut modules_map: HashMap<String, Vec<&SymbolDef>> = HashMap::new();
+    for sym in symbols {
+        let module_name = sym.file.split('/').next().unwrap_or(&sym.file).to_string();
+        modules_map.entry(module_name).or_default().push(sym);
+    }
+
+    let mut modules = Vec::new();
+    for (name, syms) in &modules_map {
+        let languages: Vec<String> = syms.iter()
+            .filter_map(|s| s.language.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let file_count = syms.iter()
+            .map(|s| s.file.as_str())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+
+        // Infer dependencies from imports
+        let deps: Vec<String> = imports.iter()
+            .filter(|i| i.from_file.starts_with(name.as_str()))
+            .map(|i| i.to_file.split('/').next().unwrap_or(&i.to_file).to_string())
+            .filter(|d| d != name)
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        // Determine layer for the module
+        let layer = if syms.iter().any(|s| infer_architectural_layer(s) == ArchitecturalLayer::Controller) {
+            ArchitecturalLayer::Controller
+        } else if syms.iter().any(|s| infer_architectural_layer(s) == ArchitecturalLayer::Service) {
+            ArchitecturalLayer::Service
+        } else if syms.iter().any(|s| infer_architectural_layer(s) == ArchitecturalLayer::Repository) {
+            ArchitecturalLayer::Repository
+        } else if syms.iter().any(|s| infer_architectural_layer(s) == ArchitecturalLayer::Model) {
+            ArchitecturalLayer::Model
+        } else {
+            ArchitecturalLayer::Unknown
+        };
+
+        modules.push(StructureModule {
+            name: name.clone(),
+            path: name.clone(),
+            languages,
+            file_count,
+            symbol_count: syms.len(),
+            dependencies: deps,
+            layer,
+        });
+    }
+
+    // Build language stats
+    let mut language_stats = HashMap::new();
+    for (lang, &file_count) in lang_file_counts {
+        let line_count = lang_line_counts.get(lang).copied().unwrap_or(0);
+        let sym_count = symbols.iter().filter(|s| s.language.as_deref() == Some(lang.as_str())).count();
+        let fn_count = symbols.iter().filter(|s| {
+            s.language.as_deref() == Some(lang.as_str())
+                && matches!(s.kind, SymbolKind::Function | SymbolKind::Method)
+        }).count();
+        let class_count = symbols.iter().filter(|s| {
+            s.language.as_deref() == Some(lang.as_str())
+                && matches!(s.kind, SymbolKind::Class | SymbolKind::Struct | SymbolKind::Interface)
+        }).count();
+
+        language_stats.insert(lang.clone(), LanguageStats {
+            file_count,
+            line_count,
+            symbol_count: sym_count,
+            function_count: fn_count,
+            class_count,
+        });
+    }
+
+    ProjectStructure {
+        modules,
+        language_stats,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Rust derive codegen detection
+// ---------------------------------------------------------------------------
+
+fn detect_rust_derive_codegen(symbols: &[SymbolDef], codegen_patterns: &mut Vec<CodegenPattern>) {
+    for sym in symbols {
+        for annot in &sym.annotations {
+            if annot.name == "derive" {
+                let generated: Vec<String> = annot.arguments.iter()
+                    .flat_map(|arg| {
+                        match arg.as_str() {
+                            "Debug" => vec!["fmt::Debug impl".to_string()],
+                            "Clone" => vec!["clone()".to_string()],
+                            "Serialize" => vec!["serde::Serialize impl".to_string()],
+                            "Deserialize" => vec!["serde::Deserialize impl".to_string()],
+                            "PartialEq" => vec!["eq()".to_string()],
+                            "Eq" => vec!["Eq impl".to_string()],
+                            "Hash" => vec!["hash()".to_string()],
+                            "Default" => vec!["default()".to_string()],
+                            _ => vec![format!("{} impl", arg)],
+                        }
+                    })
+                    .collect();
+
+                if !generated.is_empty() {
+                    codegen_patterns.push(CodegenPattern {
+                        file: sym.file.clone(),
+                        line: annot.line,
+                        pattern_type: CodegenType::RustDerive,
+                        generated_members: generated,
+                        source_annotation: format!("#[derive({})]", annot.arguments.join(", ")),
+                    });
+                }
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -729,10 +2160,17 @@ impl CodeAnalyzer for CtagsAdapter {
                 file,
                 start_line,
                 end_line,
+                start_column: 0,
+                end_column: 0,
                 visibility: Visibility::Public,
                 doc_comment: None,
                 references: Vec::new(),
                 in_cycle: false,
+                annotations: Vec::new(),
+                qualified_name: None,
+                parent_symbol: None,
+                language: None,
+                signature: None,
             });
         }
 

@@ -518,6 +518,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/v1/code_intel/callees", get(code_intel_callees))
         .route("/v1/code_intel/cycles", get(code_intel_cycles))
         .route("/v1/code_intel/unused", get(code_intel_unused))
+        .route("/v1/code_intel/flows", get(code_intel_flows))
+        .route("/v1/code_intel/frameworks", get(code_intel_frameworks))
+        .route("/v1/code_intel/structure", get(code_intel_structure))
+        .route("/v1/code_intel/codegen", get(code_intel_codegen))
         .route("/v1/code_intel/refresh", post(code_intel_refresh))
         .layer(axum::middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(CorsLayer::permissive())
@@ -1848,6 +1852,49 @@ async fn code_intel_unused(
     }
 }
 
+async fn code_intel_flows(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let guard = state.code_intel.read().await;
+    match guard.as_ref() {
+        Some(snap) => ApiResponse::ok(snap.flows.clone()),
+        None => ApiResponse::err("no snapshot available"),
+    }
+}
+
+async fn code_intel_frameworks(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let guard = state.code_intel.read().await;
+    match guard.as_ref() {
+        Some(snap) => ApiResponse::ok(snap.frameworks.clone()),
+        None => ApiResponse::err("no snapshot available"),
+    }
+}
+
+async fn code_intel_structure(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let guard = state.code_intel.read().await;
+    match guard.as_ref() {
+        Some(snap) => match &snap.structure {
+            Some(structure) => ApiResponse::ok(structure.clone()),
+            None => ApiResponse::err("no project structure available"),
+        },
+        None => ApiResponse::err("no snapshot available"),
+    }
+}
+
+async fn code_intel_codegen(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let guard = state.code_intel.read().await;
+    match guard.as_ref() {
+        Some(snap) => ApiResponse::ok(snap.codegen_patterns.clone()),
+        None => ApiResponse::err("no snapshot available"),
+    }
+}
+
 async fn code_intel_refresh(
     State(state): State<AppState>,
 ) -> impl IntoResponse {
@@ -2029,7 +2076,7 @@ mod tests {
         {
             let mut snap = CodeIntelSnapshot::new("test".into());
             let mut used = SymbolDef::new("used".into(), SymbolKind::Function, "a.rs".into(), 1, 5);
-            used.references.push(SymbolRef { file: "b.rs".into(), line: 10, context: "used()".into() });
+            used.references.push(SymbolRef { file: "b.rs".into(), line: 10, column: 0, end_line: 10, end_column: 0, context: "used()".into(), ref_kind: None });
             snap.symbols.push(used);
             snap.symbols.push(SymbolDef::new("unused".into(), SymbolKind::Function, "a.rs".into(), 10, 15));
             *state.code_intel.write().await = Some(snap);

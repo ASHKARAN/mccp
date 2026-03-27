@@ -157,6 +157,7 @@ pub enum SymbolKind {
     Struct,
     Trait,
     Module,
+    TypeAlias,
 }
 
 /// Reference kinds for symbol usage
