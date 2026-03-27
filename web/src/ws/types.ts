@@ -36,6 +36,14 @@ export type TaskInfo = {
   error?: string;
 };
 
+export type ModuleInfo = {
+  name: string;
+  path: string;
+  languages?: string[];
+  purpose?: string;
+  description?: string;
+};
+
 export type ProjectInfo = {
   id: string;
   name: string;
@@ -44,6 +52,9 @@ export type ProjectInfo = {
   last_indexed_at?: string;
   file_count?: number;
   chunk_count?: number;
+  languages?: string[];
+  modules?: ModuleInfo[];
+  description?: string;
 };
 
 export type LogLevel = 'TRACE' | 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';

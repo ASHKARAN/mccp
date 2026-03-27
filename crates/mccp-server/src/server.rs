@@ -117,6 +117,8 @@ impl AppState {
 
         // Load persisted projects registry (best-effort)
         let mut projects = HashMap::new();
+
+        let default_manifest = ProjectManifest::load_or_detect(&default_root, &default_name);
         projects.insert(
             default_id.clone(),
             ProjectRuntime {
@@ -126,6 +128,15 @@ impl AppState {
                 watch: config.indexer.watch_enabled,
                 status: "not_indexed".to_string(),
                 last_indexed_at: None,
+                languages: default_manifest.project.languages,
+                modules: default_manifest.modules.into_iter().map(|m| ModuleInfo {
+                    name: m.name,
+                    path: m.path,
+                    languages: m.languages,
+                    purpose: m.purpose,
+                    description: m.description,
+                }).collect(),
+                description: default_manifest.project.description,
                 pipeline: default_pipeline.clone(),
             },
         );
@@ -145,6 +156,7 @@ impl AppState {
                     idx_cfg,
                 ));
 
+                let loaded_manifest = ProjectManifest::load_or_detect(&root, &p.name);
                 projects.insert(
                     p.id.clone(),
                     ProjectRuntime {
@@ -154,6 +166,19 @@ impl AppState {
                         watch: p.watch,
                         status: "not_indexed".to_string(),
                         last_indexed_at: None,
+                        languages: if p.languages.is_empty() { loaded_manifest.project.languages } else { p.languages },
+                        modules: if p.modules.is_empty() {
+                            loaded_manifest.modules.into_iter().map(|m| ModuleInfo {
+                                name: m.name,
+                                path: m.path,
+                                languages: m.languages,
+                                purpose: m.purpose,
+                                description: m.description,
+                            }).collect()
+                        } else {
+                            p.modules
+                        },
+                        description: p.description.or(loaded_manifest.project.description),
                         pipeline: pipeline.clone(),
                     },
                 );
@@ -198,6 +223,18 @@ pub struct SystemMetrics {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModuleInfo {
+    pub name: String,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectInfo {
     pub id: String,
     pub name: String,
@@ -209,6 +246,12 @@ pub struct ProjectInfo {
     pub file_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chunk_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub languages: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub modules: Vec<ModuleInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -278,6 +321,12 @@ struct PersistedProject {
     root_path: String,
     #[serde(default)]
     watch: bool,
+    #[serde(default)]
+    languages: Vec<String>,
+    #[serde(default)]
+    modules: Vec<ModuleInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
 }
 
 #[derive(Clone)]
@@ -288,6 +337,9 @@ pub struct ProjectRuntime {
     pub watch: bool,
     pub status: String,
     pub last_indexed_at: Option<String>,
+    pub languages: Vec<String>,
+    pub modules: Vec<ModuleInfo>,
+    pub description: Option<String>,
     pub pipeline: Arc<mccp_indexer::IndexingPipeline>,
 }
 
@@ -302,6 +354,9 @@ impl ProjectRuntime {
             last_indexed_at: self.last_indexed_at.clone(),
             file_count: Some(st.file_count),
             chunk_count: Some(0),
+            languages: self.languages.clone(),
+            modules: self.modules.clone(),
+            description: self.description.clone(),
         }
     }
 
@@ -311,6 +366,9 @@ impl ProjectRuntime {
             name: self.name.clone(),
             root_path: self.root_path.clone(),
             watch: self.watch,
+            languages: self.languages.clone(),
+            modules: self.modules.clone(),
+            description: self.description.clone(),
         }
     }
 }
@@ -429,6 +487,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/v1/projects/:project_id/reindex",
             post(api_reindex_project),
+        )
+        .route(
+            "/api/v1/projects/:project_id/detect-languages",
+            get(api_detect_languages),
         )
         .route("/api/v1/tasks", get(api_list_tasks))
         .route("/api/v1/tasks/:task_id/cancel", post(api_cancel_task))
@@ -617,6 +679,12 @@ struct CreateProjectRequest {
     watch: Option<bool>,
     #[serde(default)]
     index_immediately: Option<bool>,
+    #[serde(default)]
+    languages: Option<Vec<String>>,
+    #[serde(default)]
+    modules: Option<Vec<ModuleInfo>>,
+    #[serde(default)]
+    description: Option<String>,
 }
 
 async fn api_list_projects(State(state): State<AppState>) -> impl IntoResponse {
@@ -668,6 +736,34 @@ async fn api_create_project(
         idx_cfg,
     ));
 
+    let languages = req.languages.unwrap_or_else(|| detect_languages(&root));
+    let modules_def = req.modules.clone().unwrap_or_else(|| {
+        detect_modules(&root).into_iter().map(|m| ModuleInfo {
+            name: m.name,
+            path: m.path,
+            languages: m.languages,
+            purpose: m.purpose,
+            description: m.description,
+        }).collect()
+    });
+
+    // Save .mccp/project.toml
+    let manifest = ProjectManifest {
+        project: ProjectMeta {
+            name: req.name.clone(),
+            description: req.description.clone(),
+            languages: languages.clone(),
+        },
+        modules: modules_def.iter().map(|m| mccp_core::project_manifest::ModuleDefinition {
+            name: m.name.clone(),
+            path: m.path.clone(),
+            languages: m.languages.clone(),
+            purpose: m.purpose.clone(),
+            description: m.description.clone(),
+        }).collect(),
+    };
+    let _ = manifest.save(&root);
+
     spawn_progress_forwarder(pipeline.progress_rx.clone(), state.ws_tx.clone());
 
     {
@@ -681,6 +777,9 @@ async fn api_create_project(
                 watch,
                 status: "not_indexed".to_string(),
                 last_indexed_at: None,
+                languages,
+                modules: modules_def,
+                description: req.description,
                 pipeline,
             },
         );
@@ -704,6 +803,12 @@ struct PatchProjectRequest {
     name: Option<String>,
     #[serde(default)]
     watch: Option<bool>,
+    #[serde(default)]
+    languages: Option<Vec<String>>,
+    #[serde(default)]
+    modules: Option<Vec<ModuleInfo>>,
+    #[serde(default)]
+    description: Option<Option<String>>,
 }
 
 async fn api_patch_project(
@@ -722,6 +827,32 @@ async fn api_patch_project(
     if let Some(w) = req.watch {
         p.watch = w;
     }
+    if let Some(languages) = req.languages {
+        p.languages = languages;
+    }
+    if let Some(modules) = req.modules {
+        p.modules = modules;
+    }
+    if let Some(description) = req.description {
+        p.description = description;
+    }
+
+    // Update .mccp/project.toml
+    let manifest = ProjectManifest {
+        project: ProjectMeta {
+            name: p.name.clone(),
+            description: p.description.clone(),
+            languages: p.languages.clone(),
+        },
+        modules: p.modules.iter().map(|m| mccp_core::project_manifest::ModuleDefinition {
+            name: m.name.clone(),
+            path: m.path.clone(),
+            languages: m.languages.clone(),
+            purpose: m.purpose.clone(),
+            description: m.description.clone(),
+        }).collect(),
+    };
+    let _ = manifest.save(std::path::Path::new(&p.root_path));
 
     let _ = save_projects_registry(&projects).await;
     drop(projects);
@@ -756,6 +887,28 @@ async fn api_delete_project(
     broadcast_projects_snapshot(&state).await;
 
     Json(serde_json::json!({ "ok": true })).into_response()
+}
+
+async fn api_detect_languages(
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+) -> axum::response::Response {
+    let projects = state.projects.read().await;
+    let Some(p) = projects.get(&project_id) else {
+        return (StatusCode::NOT_FOUND, "project not found").into_response();
+    };
+    let root = PathBuf::from(&p.root_path);
+    drop(projects);
+
+    let languages = detect_languages(&root);
+    let modules: Vec<ModuleInfo> = detect_modules(&root).into_iter().map(|m| ModuleInfo {
+        name: m.name,
+        path: m.path,
+        languages: m.languages,
+        purpose: m.purpose,
+        description: m.description,
+    }).collect();
+    Json(serde_json::json!({ "languages": languages, "modules": modules })).into_response()
 }
 
 async fn spawn_reindex_task(state: AppState, project_id: String) -> anyhow::Result<String> {

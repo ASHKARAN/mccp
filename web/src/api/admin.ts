@@ -1,5 +1,5 @@
 import { fetchJson } from './http';
-import type { ProjectInfo, SystemMetrics, SystemStatus, TaskInfo } from '../ws/types';
+import type { ModuleInfo, ProjectInfo, SystemMetrics, SystemStatus, TaskInfo } from '../ws/types';
 
 export type ConfigGetResponse = {
   path?: string;
@@ -25,9 +25,9 @@ export const admin = {
   },
 
   listProjects: () => fetchJson<ProjectInfo[]>('/api/v1/projects'),
-  createProject: (req: { name: string; root_path: string; watch?: boolean; index_immediately?: boolean }) =>
+  createProject: (req: { name: string; root_path: string; watch?: boolean; index_immediately?: boolean; languages?: string[]; modules?: ModuleInfo[]; description?: string }) =>
     fetchJson<{ id: string }>('/api/v1/projects', { method: 'POST', body: req }),
-  patchProject: (projectId: string, req: Partial<{ name: string; watch: boolean }>) =>
+  patchProject: (projectId: string, req: Partial<{ name: string; watch: boolean; languages: string[]; modules: ModuleInfo[]; description: string | null }>) =>
     fetchJson<{ ok: boolean }>(`/api/v1/projects/${encodeURIComponent(projectId)}`, { method: 'PATCH', body: req }),
   deleteProject: (projectId: string) =>
     fetchJson<{ ok: boolean }>(`/api/v1/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' }),
@@ -36,6 +36,10 @@ export const admin = {
       method: 'POST',
       body: { force },
     }),
+  detectLanguages: (projectId: string) =>
+    fetchJson<{ languages: string[]; modules: ModuleInfo[] }>(
+      `/api/v1/projects/${encodeURIComponent(projectId)}/detect-languages`
+    ),
 
   listTasks: (params: { state?: 'active' | 'finished' | 'all'; project_id?: string } = {}) => {
     const usp = new URLSearchParams();

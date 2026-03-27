@@ -19,5 +19,5 @@ npm run build
 
 ## Configuration
 You can set the backend URLs either via env vars at build-time or via the in-app **Connection** dialog:
-- `VITE_MCCP_HTTP_URL` (default: `http://localhost:7422`)
+- `VITE_MCCP_HTTP_URL` (default: `http://localhost:7425`)
 - `VITE_MCCP_WS_URL` (default: derived from HTTP + `/ws`)

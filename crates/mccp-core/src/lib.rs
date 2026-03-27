@@ -7,6 +7,7 @@ pub mod query;
 pub mod config;
 pub mod error;
 pub mod schema;
+pub mod project_manifest;
 
 pub use project::*;
 pub use file::*;
@@ -17,6 +18,7 @@ pub use query::*;
 pub use config::*;
 pub use error::*;
 pub use schema::*;
+pub use project_manifest::*;
 
 pub use serde::{Serialize, Deserialize};
 
@@ -58,6 +60,48 @@ pub enum Language {
     Ruby,
     PHP,
     Kotlin,
+}
+
+impl std::fmt::Display for Language {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Language::Rust => "rust",
+            Language::TypeScript => "typescript",
+            Language::JavaScript => "javascript",
+            Language::Python => "python",
+            Language::Java => "java",
+            Language::Go => "go",
+            Language::C => "c",
+            Language::Cpp => "cpp",
+            Language::CSharp => "csharp",
+            Language::Ruby => "ruby",
+            Language::PHP => "php",
+            Language::Kotlin => "kotlin",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl std::str::FromStr for Language {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "rust" => Ok(Language::Rust),
+            "typescript" => Ok(Language::TypeScript),
+            "javascript" => Ok(Language::JavaScript),
+            "python" => Ok(Language::Python),
+            "java" => Ok(Language::Java),
+            "go" => Ok(Language::Go),
+            "c" => Ok(Language::C),
+            "cpp" | "c++" => Ok(Language::Cpp),
+            "csharp" | "c#" => Ok(Language::CSharp),
+            "ruby" => Ok(Language::Ruby),
+            "php" => Ok(Language::PHP),
+            "kotlin" => Ok(Language::Kotlin),
+            _ => Err(format!("unknown language: {}", s)),
+        }
+    }
 }
 
 impl Language {

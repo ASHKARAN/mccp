@@ -85,11 +85,11 @@ export function TopBar() {
             <VStack spacing={4} align="stretch">
               <FormControl>
                 <FormLabel>HTTP Base URL</FormLabel>
-                <Input value={httpUrl} onChange={(e) => setHttpUrl(e.target.value)} placeholder="http://localhost:7422" />
+                <Input value={httpUrl} onChange={(e) => setHttpUrl(e.target.value)} placeholder="http://localhost:7425" />
               </FormControl>
               <FormControl>
                 <FormLabel>WebSocket URL</FormLabel>
-                <Input value={wsUrl} onChange={(e) => setWsUrlState(e.target.value)} placeholder="ws://localhost:7422/ws" />
+                <Input value={wsUrl} onChange={(e) => setWsUrlState(e.target.value)} placeholder="ws://localhost:7425/ws" />
               </FormControl>
               <Text fontSize="sm" color="gray.600">
                 These are stored in localStorage and used immediately.

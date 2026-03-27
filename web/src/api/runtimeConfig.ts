@@ -3,7 +3,7 @@ const LS_WS = 'mccp.wsUrl';
 
 export function getHttpBaseUrl(): string {
   const v = localStorage.getItem(LS_HTTP) || import.meta.env.VITE_MCCP_HTTP_URL;
-  return (v || 'http://localhost:7422').replace(/\/+$/, '');
+  return (v || 'http://localhost:7425').replace(/\/+$/, '');
 }
 
 export function setHttpBaseUrl(v: string) {
