@@ -4,7 +4,7 @@ MCCP is a comprehensive tool for indexing and analyzing codebases to provide ric
 
 ## Features
 
-- **Multi-language Support**: Supports Rust, TypeScript, JavaScript, Python, Go, Java, C/C++, C#, Ruby, PHP, Swift, Kotlin, and more
+- **Multi-language Support**: Supports Rust, TypeScript, JavaScript, Python, Go, Java, C/C++, C#, Ruby, Kotlin (11 languages via tree-sitter)
 - **Intelligent Indexing**: Parses source files to extract symbols, functions, classes, and other code elements
 - **Smart Chunking**: Splits code into meaningful chunks with configurable size and overlap
 - **LLM Integration**: Provides structured context and summaries for LLMs
@@ -12,6 +12,18 @@ MCCP is a comprehensive tool for indexing and analyzing codebases to provide ric
 - **Real-time Updates**: Watches files for changes and updates indexes automatically
 - **MCP Server**: Provides a Model Context Protocol server for integration with LLM tools
 - **CLI Interface**: Command-line tools for project management and analysis
+
+### Code Intelligence (v4)
+
+- **Symbol Usage Tracking**: Tracks every usage of classes, functions, and variables with exact file, line, and column positions — enabling precise rename/refactor operations by AI agents
+- **Framework Detection**: Automatically detects frameworks used in the project (Spring Boot, Express, NestJS, Django, Flask, FastAPI, Actix, Axum, Gin, ASP.NET Core)
+- **Execution Flow Tracking**: Traces HTTP endpoint → Controller → Service → Repository call chains, showing the full execution path for each API endpoint
+- **Codegen Pattern Detection**: Identifies build-time code generation patterns like Lombok annotations, Rust derive macros, Kotlin data classes, and C# records
+- **Project Structure Analysis**: Analyzes multi-language repository structure with per-language statistics (files, lines, symbols), module grouping, and dependency mapping
+- **Architectural Layer Inference**: Automatically classifies symbols into layers (Controller, Service, Repository, Model, Middleware, etc.) based on annotations and file paths
+- **Annotation/Decorator Extraction**: Extracts Java annotations (@RestController, @GetMapping), Rust attributes (#[derive(...)]), Python decorators, TypeScript decorators, Kotlin annotations, and C# attributes
+- **Background Indexing**: All indexing runs asynchronously in the background via tokio workers with progress streaming
+- **System Folder Filtering**: Automatically skips 34+ system directories (.git, target, dist, node_modules, __pycache__, vendor, .gradle, etc.)
 
 ## Architecture
 
@@ -243,6 +255,21 @@ The MCP server provides the following endpoints:
 - `GET /search/{id}?q=query` - Search symbols and chunks
 - `GET /context/{id}/{file}/{line}/{column}` - Get context for a location
 - `GET /stats/{id}` - Get project statistics
+
+#### Code Intelligence Endpoints
+
+- `GET /v1/code_intel/snapshot?project_id=ID` - Full code intelligence snapshot (symbols, edges, flows, frameworks)
+- `GET /v1/code_intel/symbol?project_id=ID&name=NAME` - Look up a specific symbol with all references
+- `GET /v1/code_intel/usages?project_id=ID&name=NAME` - Get all usages of a symbol (file, line, column)
+- `GET /v1/code_intel/callers?project_id=ID&name=NAME` - Find all callers of a function
+- `GET /v1/code_intel/callees?project_id=ID&name=NAME` - Find all functions called by a function
+- `GET /v1/code_intel/cycles?project_id=ID` - Detect circular dependencies
+- `GET /v1/code_intel/unused?project_id=ID` - Find unused symbols
+- `GET /v1/code_intel/flows?project_id=ID` - Get execution flows (API → Controller → Service → Repo)
+- `GET /v1/code_intel/frameworks?project_id=ID` - Get detected frameworks
+- `GET /v1/code_intel/structure?project_id=ID` - Get project structure with language stats
+- `GET /v1/code_intel/codegen?project_id=ID` - Get codegen patterns (Lombok, derive, etc.)
+- `POST /v1/code_intel/refresh?project_id=ID` - Trigger re-analysis
 
 ### CLI API
 

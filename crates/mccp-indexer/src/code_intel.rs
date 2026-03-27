@@ -1314,37 +1314,76 @@ impl TreeSitterAnalyzer {
 
     fn extract_annotation_nodes(&self, node: &Node, source: &str) -> Vec<Annotation> {
         let mut annotations = Vec::new();
-        // Look at preceding siblings for annotations
-        let mut prev = node.prev_sibling();
-        while let Some(sib) = prev {
-            let kind = sib.kind();
-            if kind == "annotation" || kind == "marker_annotation" {
-                let text = node_text(sib, source);
-                let name = text.trim_start_matches('@').split('(').next().unwrap_or("").to_string();
-                let args: Vec<String> = if text.contains('(') {
-                    text.split_once('(')
-                        .and_then(|(_, rest)| rest.strip_suffix(')'))
-                        .unwrap_or("")
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-                annotations.push(Annotation {
-                    name,
-                    arguments: args,
-                    line: sib.start_position().row as u32 + 1,
-                });
-            } else if kind == "line_comment" || kind == "block_comment" {
-                // skip comments
-            } else {
-                break;
+
+        // Strategy 1: Look inside a `modifiers` child (Java tree-sitter grammar
+        // nests annotations under `modifiers` within the declaration node).
+        for i in 0..node.child_count() {
+            if let Some(child) = node.child(i) {
+                if child.kind() == "modifiers" {
+                    for j in 0..child.child_count() {
+                        if let Some(annot) = child.child(j) {
+                            let ak = annot.kind();
+                            if ak == "annotation" || ak == "marker_annotation" {
+                                let text = node_text(annot, source);
+                                let name = text.trim_start_matches('@').split('(').next().unwrap_or("").to_string();
+                                let args: Vec<String> = if text.contains('(') {
+                                    text.split_once('(')
+                                        .and_then(|(_, rest)| rest.strip_suffix(')'))
+                                        .unwrap_or("")
+                                        .split(',')
+                                        .map(|s| s.trim().to_string())
+                                        .filter(|s| !s.is_empty())
+                                        .collect()
+                                } else {
+                                    Vec::new()
+                                };
+                                annotations.push(Annotation {
+                                    name,
+                                    arguments: args,
+                                    line: annot.start_position().row as u32 + 1,
+                                });
+                            }
+                        }
+                    }
+                }
             }
-            prev = sib.prev_sibling();
         }
-        annotations.reverse();
+
+        // Strategy 2: Look at preceding siblings (fallback for grammars where
+        // annotations are sibling nodes).
+        if annotations.is_empty() {
+            let mut prev = node.prev_sibling();
+            while let Some(sib) = prev {
+                let kind = sib.kind();
+                if kind == "annotation" || kind == "marker_annotation" {
+                    let text = node_text(sib, source);
+                    let name = text.trim_start_matches('@').split('(').next().unwrap_or("").to_string();
+                    let args: Vec<String> = if text.contains('(') {
+                        text.split_once('(')
+                            .and_then(|(_, rest)| rest.strip_suffix(')'))
+                            .unwrap_or("")
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    annotations.push(Annotation {
+                        name,
+                        arguments: args,
+                        line: sib.start_position().row as u32 + 1,
+                    });
+                } else if kind == "line_comment" || kind == "block_comment" {
+                    // skip comments
+                } else {
+                    break;
+                }
+                prev = sib.prev_sibling();
+            }
+            annotations.reverse();
+        }
+
         annotations
     }
 
@@ -2258,6 +2297,8 @@ impl CodeAnalyzer for AstGrepAdapter {
 mod tests {
     use super::*;
 
+    // ── Rust analysis tests ──────────────────────────────────────────
+
     #[test]
     fn test_analyze_rust_file() {
         let analyzer = TreeSitterAnalyzer::new();
@@ -2331,7 +2372,6 @@ fn c() {}
             .analyze_file("src/lib.rs", code, mccp_core::Language::Rust)
             .unwrap();
 
-        // a calls b
         let a_calls: Vec<&str> = analysis
             .call_edges
             .iter()
@@ -2340,7 +2380,6 @@ fn c() {}
             .collect();
         assert!(a_calls.iter().any(|c| c.contains("b")), "a should call b: {:?}", a_calls);
 
-        // b calls c
         let b_calls: Vec<&str> = analysis
             .call_edges
             .iter()
@@ -2417,5 +2456,1076 @@ pub fn documented_fn() {}
         let sym = analysis.symbols.iter().find(|s| s.name == "documented_fn").unwrap();
         assert!(sym.doc_comment.is_some());
         assert!(sym.doc_comment.as_ref().unwrap().contains("doc comment"));
+    }
+
+    #[test]
+    fn test_rust_derive_annotations() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    pub name: String,
+    pub value: i32,
+}
+
+#[derive(PartialEq, Eq, Hash)]
+enum Status {
+    Active,
+    Inactive,
+}
+"#;
+        let analysis = analyzer
+            .analyze_file("src/config.rs", code, mccp_core::Language::Rust)
+            .unwrap();
+
+        let config = analysis.symbols.iter().find(|s| s.name == "Config").unwrap();
+        assert!(!config.annotations.is_empty(), "Config should have derive annotations");
+        let derive = config.annotations.iter().find(|a| a.name == "derive").unwrap();
+        assert!(derive.arguments.contains(&"Debug".to_string()));
+        assert!(derive.arguments.contains(&"Clone".to_string()));
+        assert!(derive.arguments.contains(&"Serialize".to_string()));
+
+        let status = analysis.symbols.iter().find(|s| s.name == "Status").unwrap();
+        let derive = status.annotations.iter().find(|a| a.name == "derive").unwrap();
+        assert!(derive.arguments.contains(&"PartialEq".to_string()));
+        assert!(derive.arguments.contains(&"Hash".to_string()));
+    }
+
+    #[test]
+    fn test_rust_language_tag() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+pub struct Foo {}
+"#;
+        let analysis = analyzer
+            .analyze_file("src/lib.rs", code, mccp_core::Language::Rust)
+            .unwrap();
+
+        let sym = analysis.symbols.iter().find(|s| s.name == "Foo").unwrap();
+        assert_eq!(sym.language.as_deref(), Some("rust"));
+    }
+
+    #[test]
+    fn test_rust_module_extraction() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+pub mod utils;
+mod internal;
+"#;
+        let analysis = analyzer
+            .analyze_file("src/lib.rs", code, mccp_core::Language::Rust)
+            .unwrap();
+
+        let names: Vec<&str> = analysis.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"utils"), "should find utils module: {:?}", names);
+        assert!(names.contains(&"internal"), "should find internal module: {:?}", names);
+    }
+
+    // ── Reference tracking tests ─────────────────────────────────────
+
+    #[test]
+    fn test_reference_collection_rust() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+fn helper() -> i32 {
+    42
+}
+
+fn main() {
+    let x = helper();
+    let y = helper();
+}
+"#;
+        let analysis = analyzer
+            .analyze_file("src/main.rs", code, mccp_core::Language::Rust)
+            .unwrap();
+
+        let helper = analysis.symbols.iter().find(|s| s.name == "helper").unwrap();
+        // helper should have references from main's calls
+        assert!(
+            !helper.references.is_empty(),
+            "helper should have references: found {} refs",
+            helper.references.len()
+        );
+        // All references should have line and column info
+        for r in &helper.references {
+            assert!(r.line > 0, "reference line should be positive");
+        }
+    }
+
+    // ── Java analysis tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_java_class_and_methods() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+package com.example;
+
+import java.util.List;
+
+public class UserService {
+    private UserRepository userRepo;
+
+    public User findById(Long id) {
+        return userRepo.findById(id);
+    }
+
+    public List<User> findAll() {
+        return userRepo.findAll();
+    }
+}
+"#;
+        let analysis = analyzer
+            .analyze_file("src/main/java/UserService.java", code, mccp_core::Language::Java)
+            .unwrap();
+
+        let names: Vec<&str> = analysis.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"UserService"), "should find UserService class: {:?}", names);
+        assert!(names.contains(&"findById"), "should find findById method: {:?}", names);
+        assert!(names.contains(&"findAll"), "should find findAll method: {:?}", names);
+
+        let user_service = analysis.symbols.iter().find(|s| s.name == "UserService").unwrap();
+        assert_eq!(user_service.kind, SymbolKind::Class);
+        assert_eq!(user_service.visibility, Visibility::Public);
+        assert_eq!(user_service.language.as_deref(), Some("java"));
+
+        // Methods should have parent set to the class
+        let find_by_id = analysis.symbols.iter().find(|s| s.name == "findById").unwrap();
+        assert!(find_by_id.parent_symbol.is_some(), "findById should have parent symbol");
+    }
+
+    #[test]
+    fn test_java_annotations() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+import org.springframework.web.bind.annotation.*;
+
+@RestController
+@RequestMapping("/api/users")
+public class UserController {
+
+    @GetMapping("/{id}")
+    public User getUser(@PathVariable Long id) {
+        return null;
+    }
+
+    @PostMapping
+    public User createUser(@RequestBody User user) {
+        return null;
+    }
+}
+"#;
+        let analysis = analyzer
+            .analyze_file("src/main/java/UserController.java", code, mccp_core::Language::Java)
+            .unwrap();
+
+        let controller = analysis.symbols.iter().find(|s| s.name == "UserController").unwrap();
+        let annot_names: Vec<&str> = controller.annotations.iter().map(|a| a.name.as_str()).collect();
+        assert!(
+            annot_names.contains(&"RestController"),
+            "should have @RestController: {:?}",
+            annot_names
+        );
+    }
+
+    #[test]
+    fn test_java_imports() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+import java.util.List;
+import java.util.Map;
+import com.example.service.UserService;
+
+public class Main {}
+"#;
+        let analysis = analyzer
+            .analyze_file("Main.java", code, mccp_core::Language::Java)
+            .unwrap();
+
+        assert!(
+            analysis.import_edges.len() >= 3,
+            "should have at least 3 imports: got {}",
+            analysis.import_edges.len()
+        );
+    }
+
+    #[test]
+    fn test_java_interface() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+public interface UserRepository {
+    User findById(Long id);
+    List<User> findAll();
+}
+"#;
+        let analysis = analyzer
+            .analyze_file("UserRepository.java", code, mccp_core::Language::Java)
+            .unwrap();
+
+        let repo = analysis.symbols.iter().find(|s| s.name == "UserRepository").unwrap();
+        assert_eq!(repo.kind, SymbolKind::Interface);
+    }
+
+    #[test]
+    fn test_java_enum() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+public enum Status {
+    ACTIVE,
+    INACTIVE,
+    DELETED;
+}
+"#;
+        let analysis = analyzer
+            .analyze_file("Status.java", code, mccp_core::Language::Java)
+            .unwrap();
+
+        let status = analysis.symbols.iter().find(|s| s.name == "Status").unwrap();
+        assert_eq!(status.kind, SymbolKind::Enum);
+    }
+
+    #[test]
+    fn test_java_lombok_detection() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+import lombok.Data;
+import lombok.Builder;
+
+@Data
+@Builder
+public class UserDto {
+    private String name;
+    private String email;
+    private int age;
+}
+"#;
+        let analysis = analyzer
+            .analyze_file("UserDto.java", code, mccp_core::Language::Java)
+            .unwrap();
+
+        let dto = analysis.symbols.iter().find(|s| s.name == "UserDto").unwrap();
+        let annot_names: Vec<&str> = dto.annotations.iter().map(|a| a.name.as_str()).collect();
+        assert!(annot_names.contains(&"Data"), "should have @Data: {:?}", annot_names);
+        assert!(annot_names.contains(&"Builder"), "should have @Builder: {:?}", annot_names);
+
+        // Codegen patterns should be detected
+        assert!(
+            !analysis.codegen_patterns.is_empty(),
+            "should detect Lombok codegen patterns"
+        );
+        assert!(
+            analysis.codegen_patterns.iter().any(|p| p.pattern_type == CodegenType::Lombok),
+            "should detect Lombok type: {:?}",
+            analysis.codegen_patterns
+        );
+    }
+
+    #[test]
+    fn test_java_call_extraction() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+public class Service {
+    public void process() {
+        validate();
+        save();
+    }
+
+    private void validate() {}
+    private void save() {}
+}
+"#;
+        let analysis = analyzer
+            .analyze_file("Service.java", code, mccp_core::Language::Java)
+            .unwrap();
+
+        let process_calls: Vec<&str> = analysis.call_edges.iter()
+            .filter(|e| e.caller.contains("process"))
+            .map(|e| e.callee.as_str())
+            .collect();
+        assert!(!process_calls.is_empty(), "process should have call edges: {:?}", analysis.call_edges);
+    }
+
+    // ── Go analysis tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_go_functions_and_types() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+package main
+
+import "fmt"
+
+// Handler handles HTTP requests
+func Handler(w http.ResponseWriter, r *http.Request) {
+    fmt.Fprintf(w, "Hello")
+}
+
+func helper() string {
+    return "private"
+}
+
+type User struct {
+    Name  string
+    Email string
+}
+
+type Logger interface {
+    Log(msg string)
+}
+"#;
+        let analysis = analyzer
+            .analyze_file("main.go", code, mccp_core::Language::Go)
+            .unwrap();
+
+        let names: Vec<&str> = analysis.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"Handler"), "should find Handler: {:?}", names);
+        assert!(names.contains(&"helper"), "should find helper: {:?}", names);
+        assert!(names.contains(&"User"), "should find User: {:?}", names);
+        assert!(names.contains(&"Logger"), "should find Logger: {:?}", names);
+
+        // Go visibility: uppercase = public
+        let handler = analysis.symbols.iter().find(|s| s.name == "Handler").unwrap();
+        assert_eq!(handler.visibility, Visibility::Public);
+        assert_eq!(handler.language.as_deref(), Some("go"));
+
+        let helper = analysis.symbols.iter().find(|s| s.name == "helper").unwrap();
+        assert_eq!(helper.visibility, Visibility::Private);
+
+        let user = analysis.symbols.iter().find(|s| s.name == "User").unwrap();
+        assert_eq!(user.kind, SymbolKind::Struct);
+
+        let logger = analysis.symbols.iter().find(|s| s.name == "Logger").unwrap();
+        assert_eq!(logger.kind, SymbolKind::Interface);
+    }
+
+    #[test]
+    fn test_go_imports() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+package main
+
+import (
+    "fmt"
+    "net/http"
+    "github.com/gin-gonic/gin"
+)
+
+func main() {}
+"#;
+        let analysis = analyzer
+            .analyze_file("main.go", code, mccp_core::Language::Go)
+            .unwrap();
+
+        assert!(
+            analysis.import_edges.len() >= 2,
+            "should have multiple imports: got {}: {:?}",
+            analysis.import_edges.len(),
+            analysis.import_edges
+        );
+    }
+
+    #[test]
+    fn test_go_method_declaration() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+package main
+
+type Server struct {
+    port int
+}
+
+func (s *Server) Start() error {
+    return nil
+}
+
+func (s *Server) stop() {
+}
+"#;
+        let analysis = analyzer
+            .analyze_file("server.go", code, mccp_core::Language::Go)
+            .unwrap();
+
+        let start = analysis.symbols.iter().find(|s| s.name == "Start").unwrap();
+        assert_eq!(start.kind, SymbolKind::Method);
+        assert_eq!(start.visibility, Visibility::Public);
+
+        let stop = analysis.symbols.iter().find(|s| s.name == "stop").unwrap();
+        assert_eq!(stop.kind, SymbolKind::Method);
+        assert_eq!(stop.visibility, Visibility::Private);
+    }
+
+    // ── TypeScript analysis tests ────────────────────────────────────
+
+    #[test]
+    fn test_typescript_class_and_imports() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+import { Injectable } from '@nestjs/common';
+import { UserRepository } from './user.repository';
+
+export class UserService {
+    constructor(private userRepo: UserRepository) {}
+
+    async findAll(): Promise<User[]> {
+        return this.userRepo.find();
+    }
+}
+
+function helper() {
+    return "test";
+}
+"#;
+        let analysis = analyzer
+            .analyze_file("user.service.ts", code, mccp_core::Language::TypeScript)
+            .unwrap();
+
+        let names: Vec<&str> = analysis.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"UserService"), "should find UserService: {:?}", names);
+        assert!(names.contains(&"helper"), "should find helper: {:?}", names);
+
+        assert!(
+            !analysis.import_edges.is_empty(),
+            "should have import edges"
+        );
+    }
+
+    // ── Python analysis tests ────────────────────────────────────────
+
+    #[test]
+    fn test_python_class_and_functions() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+from flask import Flask
+from models import User
+
+app = Flask(__name__)
+
+class UserService:
+    def __init__(self):
+        self.users = []
+
+    def find_all(self):
+        return self.users
+
+async def fetch_data(url: str) -> dict:
+    pass
+
+def helper():
+    return 42
+"#;
+        let analysis = analyzer
+            .analyze_file("service.py", code, mccp_core::Language::Python)
+            .unwrap();
+
+        let names: Vec<&str> = analysis.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"UserService"), "should find UserService: {:?}", names);
+        assert!(names.contains(&"fetch_data"), "should find fetch_data: {:?}", names);
+        assert!(names.contains(&"helper"), "should find helper: {:?}", names);
+    }
+
+    // ── C# analysis tests ────────────────────────────────────────────
+
+    #[test]
+    fn test_csharp_class_and_methods() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+using System;
+using System.Collections.Generic;
+
+namespace MyApp.Services
+{
+    public class UserService
+    {
+        public User FindById(int id)
+        {
+            return null;
+        }
+
+        private void Validate(User user)
+        {
+        }
+    }
+
+    public interface IUserRepository
+    {
+        User FindById(int id);
+    }
+
+    public enum Status
+    {
+        Active,
+        Inactive
+    }
+}
+"#;
+        let analysis = analyzer
+            .analyze_file("UserService.cs", code, mccp_core::Language::CSharp)
+            .unwrap();
+
+        let names: Vec<&str> = analysis.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"UserService"), "should find UserService: {:?}", names);
+        assert!(names.contains(&"FindById"), "should find FindById: {:?}", names);
+        assert!(names.contains(&"IUserRepository"), "should find IUserRepository: {:?}", names);
+        assert!(names.contains(&"Status"), "should find Status: {:?}", names);
+
+        let iface = analysis.symbols.iter().find(|s| s.name == "IUserRepository").unwrap();
+        assert_eq!(iface.kind, SymbolKind::Interface);
+
+        let status = analysis.symbols.iter().find(|s| s.name == "Status").unwrap();
+        assert_eq!(status.kind, SymbolKind::Enum);
+
+        // Check imports
+        assert!(
+            analysis.import_edges.len() >= 2,
+            "should have using directives: {:?}",
+            analysis.import_edges
+        );
+    }
+
+    #[test]
+    fn test_csharp_namespace_hierarchy() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = r#"
+namespace MyApp.Controllers
+{
+    public class HomeController
+    {
+        public string Index()
+        {
+            return "Hello";
+        }
+    }
+}
+"#;
+        let analysis = analyzer
+            .analyze_file("HomeController.cs", code, mccp_core::Language::CSharp)
+            .unwrap();
+
+        let ns = analysis.symbols.iter().find(|s| s.kind == SymbolKind::Module);
+        assert!(ns.is_some(), "should find namespace as module");
+
+        let controller = analysis.symbols.iter().find(|s| s.name == "HomeController").unwrap();
+        assert!(controller.parent_symbol.is_some(), "controller should have parent namespace");
+    }
+
+    // ── Framework detection tests ────────────────────────────────────
+
+    #[test]
+    fn test_spring_boot_detection() {
+        let mut frameworks = Vec::new();
+        let code = r#"
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.GetMapping;
+
+@RestController
+public class UserController {
+    @GetMapping("/users")
+    public List<User> getUsers() {
+        return null;
+    }
+}
+"#;
+        detect_frameworks("UserController.java", code, &mut frameworks);
+        assert!(
+            frameworks.iter().any(|f| f.framework == Framework::SpringMVC),
+            "should detect Spring MVC: {:?}",
+            frameworks
+        );
+    }
+
+    #[test]
+    fn test_express_detection() {
+        let mut frameworks = Vec::new();
+        let code = r#"
+const express = require('express');
+const app = express();
+
+app.get('/users', (req, res) => {
+    res.json([]);
+});
+
+app.post('/users', (req, res) => {
+    res.json({});
+});
+"#;
+        detect_frameworks("server.js", code, &mut frameworks);
+        assert!(
+            frameworks.iter().any(|f| f.framework == Framework::Express),
+            "should detect Express: {:?}",
+            frameworks
+        );
+    }
+
+    #[test]
+    fn test_fastapi_detection() {
+        let mut frameworks = Vec::new();
+        let code = r#"
+from fastapi import FastAPI
+
+app = FastAPI()
+
+@app.get("/users")
+async def get_users():
+    return []
+
+@app.post("/users")
+async def create_user(user: User):
+    return user
+"#;
+        detect_frameworks("main.py", code, &mut frameworks);
+        assert!(
+            frameworks.iter().any(|f| f.framework == Framework::FastAPI),
+            "should detect FastAPI: {:?}",
+            frameworks
+        );
+    }
+
+    #[test]
+    fn test_nestjs_detection() {
+        let mut frameworks = Vec::new();
+        let code = r#"
+import { Controller, Get, Post } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+
+@Controller('users')
+export class UserController {
+    @Get()
+    findAll() {}
+}
+"#;
+        detect_frameworks("user.controller.ts", code, &mut frameworks);
+        assert!(
+            frameworks.iter().any(|f| f.framework == Framework::NestJS),
+            "should detect NestJS: {:?}",
+            frameworks
+        );
+    }
+
+    #[test]
+    fn test_axum_detection() {
+        let mut frameworks = Vec::new();
+        let code = r#"
+use axum::routing::{get, post};
+use axum::Router;
+
+let app = Router::new()
+    .route("/users", get(list_users))
+    .route("/users", post(create_user));
+"#;
+        detect_frameworks("main.rs", code, &mut frameworks);
+        assert!(
+            frameworks.iter().any(|f| f.framework == Framework::Axum),
+            "should detect Axum: {:?}",
+            frameworks
+        );
+    }
+
+    #[test]
+    fn test_gin_detection() {
+        let mut frameworks = Vec::new();
+        let code = r#"
+package main
+
+import "github.com/gin-gonic/gin"
+
+func main() {
+    r := gin.Default()
+    r.GET("/users", getUsers)
+}
+"#;
+        detect_frameworks("main.go", code, &mut frameworks);
+        assert!(
+            frameworks.iter().any(|f| f.framework == Framework::Gin),
+            "should detect Gin: {:?}",
+            frameworks
+        );
+    }
+
+    #[test]
+    fn test_aspnet_detection() {
+        let mut frameworks = Vec::new();
+        let code = r#"
+using Microsoft.AspNetCore.Mvc;
+
+[ApiController]
+[Route("api/[controller]")]
+public class UsersController : ControllerBase
+{
+    [HttpGet]
+    public IActionResult GetAll()
+    {
+        return Ok();
+    }
+}
+"#;
+        detect_frameworks("UsersController.cs", code, &mut frameworks);
+        assert!(
+            frameworks.iter().any(|f| f.framework == Framework::AspNetCore),
+            "should detect ASP.NET Core: {:?}",
+            frameworks
+        );
+    }
+
+    #[test]
+    fn test_no_framework_false_positive() {
+        let mut frameworks = Vec::new();
+        let code = r#"
+fn main() {
+    println!("Hello, world!");
+}
+"#;
+        detect_frameworks("main.rs", code, &mut frameworks);
+        assert!(frameworks.is_empty(), "should not detect any framework for simple code");
+    }
+
+    // ── Execution flow detection tests ───────────────────────────────
+
+    #[test]
+    fn test_flow_detection_from_annotations() {
+        let mut symbols = vec![
+            {
+                let mut s = SymbolDef::new(
+                    "getUsers".to_string(),
+                    SymbolKind::Method,
+                    "controller/UserController.java".to_string(),
+                    10, 20,
+                );
+                s.annotations.push(Annotation {
+                    name: "GetMapping".to_string(),
+                    arguments: vec!["/users".to_string()],
+                    line: 9,
+                });
+                s
+            },
+            {
+                let mut s = SymbolDef::new(
+                    "findAll".to_string(),
+                    SymbolKind::Method,
+                    "service/UserService.java".to_string(),
+                    5, 15,
+                );
+                s
+            },
+        ];
+
+        let call_edges = vec![
+            CallEdge {
+                caller: symbols[0].id.clone(),
+                callee: symbols[1].id.clone(),
+            },
+        ];
+
+        let flows = detect_execution_flows(&symbols, &call_edges);
+        assert!(
+            !flows.is_empty(),
+            "should detect at least one HTTP flow"
+        );
+        assert_eq!(flows[0].flow_type, FlowType::HttpEndpoint);
+        assert!(flows[0].steps.len() >= 1, "flow should have at least entry step");
+    }
+
+    #[test]
+    fn test_flow_detection_no_entry_points() {
+        let symbols = vec![
+            SymbolDef::new("helper".to_string(), SymbolKind::Function, "util.rs".to_string(), 1, 10),
+            SymbolDef::new("internal".to_string(), SymbolKind::Function, "lib.rs".to_string(), 1, 5),
+        ];
+        let call_edges = vec![
+            CallEdge { caller: symbols[0].id.clone(), callee: symbols[1].id.clone() },
+        ];
+        let flows = detect_execution_flows(&symbols, &call_edges);
+        assert!(flows.is_empty(), "should not detect flows without entry point annotations");
+    }
+
+    // ── Architectural layer inference tests ───────────────────────────
+
+    #[test]
+    fn test_infer_layer_from_annotations() {
+        let mut sym = SymbolDef::new("UserController".to_string(), SymbolKind::Class, "ctrl.java".to_string(), 1, 50);
+        sym.annotations.push(Annotation { name: "RestController".to_string(), arguments: vec![], line: 1 });
+        assert_eq!(infer_architectural_layer(&sym), ArchitecturalLayer::Controller);
+
+        let mut sym = SymbolDef::new("UserService".to_string(), SymbolKind::Class, "svc.java".to_string(), 1, 50);
+        sym.annotations.push(Annotation { name: "Service".to_string(), arguments: vec![], line: 1 });
+        assert_eq!(infer_architectural_layer(&sym), ArchitecturalLayer::Service);
+
+        let mut sym = SymbolDef::new("UserRepo".to_string(), SymbolKind::Class, "repo.java".to_string(), 1, 50);
+        sym.annotations.push(Annotation { name: "Repository".to_string(), arguments: vec![], line: 1 });
+        assert_eq!(infer_architectural_layer(&sym), ArchitecturalLayer::Repository);
+    }
+
+    #[test]
+    fn test_infer_layer_from_file_path() {
+        let sym = SymbolDef::new("Foo".to_string(), SymbolKind::Class, "src/controllers/user.ts".to_string(), 1, 50);
+        assert_eq!(infer_architectural_layer(&sym), ArchitecturalLayer::Controller);
+
+        let sym = SymbolDef::new("Bar".to_string(), SymbolKind::Class, "src/services/auth.ts".to_string(), 1, 50);
+        assert_eq!(infer_architectural_layer(&sym), ArchitecturalLayer::Service);
+
+        let sym = SymbolDef::new("Baz".to_string(), SymbolKind::Class, "src/models/user.py".to_string(), 1, 50);
+        assert_eq!(infer_architectural_layer(&sym), ArchitecturalLayer::Model);
+
+        let sym = SymbolDef::new("Qux".to_string(), SymbolKind::Class, "src/repository/data.go".to_string(), 1, 50);
+        assert_eq!(infer_architectural_layer(&sym), ArchitecturalLayer::Repository);
+    }
+
+    // ── Codegen pattern detection tests ──────────────────────────────
+
+    #[test]
+    fn test_rust_derive_codegen_detection() {
+        let mut symbols = vec![{
+            let mut s = SymbolDef::new("MyStruct".to_string(), SymbolKind::Struct, "lib.rs".to_string(), 3, 6);
+            s.annotations.push(Annotation {
+                name: "derive".to_string(),
+                arguments: vec!["Debug".to_string(), "Clone".to_string(), "Serialize".to_string()],
+                line: 2,
+            });
+            s
+        }];
+
+        let mut patterns = Vec::new();
+        detect_rust_derive_codegen(&symbols, &mut patterns);
+
+        assert!(!patterns.is_empty(), "should detect derive codegen");
+        assert_eq!(patterns[0].pattern_type, CodegenType::RustDerive);
+        assert!(patterns[0].generated_members.iter().any(|g| g.contains("Debug")));
+        assert!(patterns[0].generated_members.iter().any(|g| g.contains("clone")));
+    }
+
+    // ── Project structure tests ──────────────────────────────────────
+
+    #[test]
+    fn test_build_project_structure() {
+        let symbols = vec![
+            {
+                let mut s = SymbolDef::new("main".to_string(), SymbolKind::Function, "src/main.rs".to_string(), 1, 10);
+                s.language = Some("rust".to_string());
+                s
+            },
+            {
+                let mut s = SymbolDef::new("UserService".to_string(), SymbolKind::Class, "src/service.ts".to_string(), 1, 50);
+                s.language = Some("typescript".to_string());
+                s
+            },
+        ];
+        let imports = vec![
+            ImportEdge {
+                from_file: "src/main.rs".to_string(),
+                to_file: "src/lib.rs".to_string(),
+                symbol: None,
+            },
+        ];
+        let lang_files: HashMap<String, usize> = [("rust".to_string(), 5), ("typescript".to_string(), 3)].into();
+        let lang_lines: HashMap<String, usize> = [("rust".to_string(), 500), ("typescript".to_string(), 300)].into();
+
+        let structure = build_project_structure(
+            std::path::Path::new("/tmp"),
+            &symbols,
+            &imports,
+            &lang_files,
+            &lang_lines,
+        );
+
+        assert!(!structure.modules.is_empty(), "should have modules");
+        assert!(!structure.language_stats.is_empty(), "should have language stats");
+        assert!(
+            structure.language_stats.contains_key("rust"),
+            "should have rust stats"
+        );
+        assert!(
+            structure.language_stats.contains_key("typescript"),
+            "should have typescript stats"
+        );
+    }
+
+    // ── Multi-language project tests ─────────────────────────────────
+
+    #[test]
+    fn test_multi_language_same_project() {
+        let analyzer = TreeSitterAnalyzer::new();
+
+        // Analyze Rust file
+        let rust_code = "pub fn rust_fn() { go_fn(); }";
+        let rust = analyzer.analyze_file("src/main.rs", rust_code, mccp_core::Language::Rust).unwrap();
+        assert!(!rust.symbols.is_empty());
+
+        // Analyze Java file
+        let java_code = "public class JavaClass { public void method() {} }";
+        let java = analyzer.analyze_file("src/Main.java", java_code, mccp_core::Language::Java).unwrap();
+        assert!(!java.symbols.is_empty());
+
+        // Analyze Go file
+        let go_code = "package main\nfunc GoFunc() {}";
+        let go = analyzer.analyze_file("main.go", go_code, mccp_core::Language::Go).unwrap();
+        assert!(!go.symbols.is_empty());
+
+        // Analyze Python file
+        let py_code = "def python_func():\n    pass\nclass PyClass:\n    pass";
+        let py = analyzer.analyze_file("main.py", py_code, mccp_core::Language::Python).unwrap();
+        assert!(!py.symbols.is_empty());
+
+        // All should produce distinct symbols
+        let all_names: Vec<&str> = rust.symbols.iter()
+            .chain(java.symbols.iter())
+            .chain(go.symbols.iter())
+            .chain(py.symbols.iter())
+            .map(|s| s.name.as_str())
+            .collect();
+        assert!(all_names.contains(&"rust_fn"));
+        assert!(all_names.contains(&"JavaClass"));
+        assert!(all_names.contains(&"GoFunc"));
+        assert!(all_names.contains(&"python_func"));
+    }
+
+    // ── Column information tests ─────────────────────────────────────
+
+    #[test]
+    fn test_java_column_info() {
+        let analyzer = TreeSitterAnalyzer::new();
+        let code = "public class Foo {\n    public void bar() {}\n}";
+        let analysis = analyzer.analyze_file("Foo.java", code, mccp_core::Language::Java).unwrap();
+
+        let foo = analysis.symbols.iter().find(|s| s.name == "Foo").unwrap();
+        assert_eq!(foo.start_line, 1);
+        // start_column should be set
+        assert_eq!(foo.start_column, 0);
+    }
+
+    // ── Default skip dirs test ───────────────────────────────────────
+
+    #[test]
+    fn test_default_skip_dirs_list() {
+        use super::super::pipeline::DEFAULT_SKIP_DIRS;
+        assert!(DEFAULT_SKIP_DIRS.contains(&".git"), "should skip .git");
+        assert!(DEFAULT_SKIP_DIRS.contains(&"target"), "should skip target");
+        assert!(DEFAULT_SKIP_DIRS.contains(&"dist"), "should skip dist");
+        assert!(DEFAULT_SKIP_DIRS.contains(&"node_modules"), "should skip node_modules");
+        assert!(DEFAULT_SKIP_DIRS.contains(&"build"), "should skip build");
+        assert!(DEFAULT_SKIP_DIRS.contains(&".idea"), "should skip .idea");
+        assert!(DEFAULT_SKIP_DIRS.contains(&".vscode"), "should skip .vscode");
+        assert!(DEFAULT_SKIP_DIRS.contains(&"__pycache__"), "should skip __pycache__");
+        assert!(DEFAULT_SKIP_DIRS.contains(&"vendor"), "should skip vendor");
+        assert!(DEFAULT_SKIP_DIRS.contains(&"bin"), "should skip bin");
+        assert!(DEFAULT_SKIP_DIRS.contains(&"obj"), "should skip obj");
+    }
+
+    // ── Snapshot serialization round-trip test ───────────────────────
+
+    #[test]
+    fn test_snapshot_serialization_roundtrip() {
+        let mut snap = CodeIntelSnapshot::new("test-project".to_string());
+        snap.symbols.push({
+            let mut s = SymbolDef::new("test_fn".to_string(), SymbolKind::Function, "main.rs".to_string(), 1, 10);
+            s.annotations.push(Annotation { name: "test".to_string(), arguments: vec![], line: 1 });
+            s.language = Some("rust".to_string());
+            s.references.push(SymbolRef {
+                file: "lib.rs".to_string(),
+                line: 5,
+                column: 10,
+                end_line: 5,
+                end_column: 17,
+                context: "test_fn()".to_string(),
+                ref_kind: Some("call".to_string()),
+            });
+            s
+        });
+        snap.flows.push(ExecutionFlow {
+            id: "flow-1".to_string(),
+            name: "test flow".to_string(),
+            flow_type: FlowType::HttpEndpoint,
+            steps: vec![FlowStep {
+                symbol_id: "test".to_string(),
+                file: "main.rs".to_string(),
+                start_line: 1,
+                end_line: 10,
+                layer: ArchitecturalLayer::Controller,
+                description: "entry".to_string(),
+                annotations: vec!["GetMapping".to_string()],
+            }],
+            entry_file: "main.rs".to_string(),
+            entry_line: 1,
+        });
+        snap.codegen_patterns.push(CodegenPattern {
+            file: "model.rs".to_string(),
+            line: 1,
+            pattern_type: CodegenType::RustDerive,
+            generated_members: vec!["Debug impl".to_string()],
+            source_annotation: "#[derive(Debug)]".to_string(),
+        });
+        snap.frameworks.push(FrameworkInfo {
+            framework: Framework::Axum,
+            version: None,
+            file: "main.rs".to_string(),
+            detected_patterns: vec!["Router::new".to_string()],
+        });
+
+        let json = serde_json::to_string(&snap).unwrap();
+        let loaded: CodeIntelSnapshot = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(loaded.project_id, snap.project_id);
+        assert_eq!(loaded.symbols.len(), 1);
+        assert_eq!(loaded.flows.len(), 1);
+        assert_eq!(loaded.codegen_patterns.len(), 1);
+        assert_eq!(loaded.frameworks.len(), 1);
+        assert_eq!(loaded.symbols[0].references.len(), 1);
+        assert_eq!(loaded.symbols[0].references[0].column, 10);
+    }
+
+    // ── Incremental update test ──────────────────────────────────────
+
+    #[test]
+    fn test_incremental_update() {
+        let mut snap = CodeIntelSnapshot::new("test".to_string());
+        snap.symbols.push(SymbolDef::new("old_fn".to_string(), SymbolKind::Function, "a.rs".to_string(), 1, 5));
+        snap.symbols.push(SymbolDef::new("keep_fn".to_string(), SymbolKind::Function, "b.rs".to_string(), 1, 5));
+
+        let mut partial = CodeIntelSnapshot::new("test".to_string());
+        partial.symbols.push(SymbolDef::new("new_fn".to_string(), SymbolKind::Function, "a.rs".to_string(), 1, 10));
+
+        snap.incremental_update(&["a.rs".to_string()], partial);
+
+        let names: Vec<&str> = snap.symbols.iter().map(|s| s.name.as_str()).collect();
+        assert!(names.contains(&"new_fn"), "should have new_fn: {:?}", names);
+        assert!(names.contains(&"keep_fn"), "should keep keep_fn: {:?}", names);
+        assert!(!names.contains(&"old_fn"), "should remove old_fn: {:?}", names);
+    }
+
+    // ── Helper function tests ────────────────────────────────────────
+
+    #[test]
+    fn test_get_line_context() {
+        let source = "line one\nline two\nline three\n";
+        assert_eq!(get_line_context(source, 1), "line one");
+        assert_eq!(get_line_context(source, 2), "line two");
+        assert_eq!(get_line_context(source, 3), "line three");
+        assert_eq!(get_line_context(source, 0), "line one");  // saturating_sub
+    }
+
+    #[test]
+    fn test_language_stats_in_project_structure() {
+        let symbols = vec![
+            { let mut s = SymbolDef::new("fn1".to_string(), SymbolKind::Function, "a.rs".to_string(), 1, 5); s.language = Some("rust".to_string()); s },
+            { let mut s = SymbolDef::new("fn2".to_string(), SymbolKind::Function, "b.rs".to_string(), 1, 5); s.language = Some("rust".to_string()); s },
+            { let mut s = SymbolDef::new("Cls".to_string(), SymbolKind::Class, "c.java".to_string(), 1, 50); s.language = Some("java".to_string()); s },
+        ];
+        let lang_files = [("rust".to_string(), 10usize), ("java".to_string(), 5usize)].into();
+        let lang_lines = [("rust".to_string(), 1000usize), ("java".to_string(), 500usize)].into();
+
+        let structure = build_project_structure(
+            std::path::Path::new("/tmp"),
+            &symbols,
+            &[],
+            &lang_files,
+            &lang_lines,
+        );
+
+        let rust_stats = structure.language_stats.get("rust").unwrap();
+        assert_eq!(rust_stats.file_count, 10);
+        assert_eq!(rust_stats.line_count, 1000);
+        assert_eq!(rust_stats.function_count, 2);
+
+        let java_stats = structure.language_stats.get("java").unwrap();
+        assert_eq!(java_stats.file_count, 5);
+        assert_eq!(java_stats.class_count, 1);
     }
 }

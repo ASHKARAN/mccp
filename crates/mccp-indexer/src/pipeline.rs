@@ -9,7 +9,7 @@ use ignore::WalkBuilder;
 
 /// Directories always skipped when `skip_default_dirs` is enabled.
 /// Covers VCS, package-manager caches, build outputs, and IDE metadata.
-const DEFAULT_SKIP_DIRS: &[&str] = &[
+pub const DEFAULT_SKIP_DIRS: &[&str] = &[
     // VCS
     ".git", ".hg", ".svn",
     // Node / JS / TS
