@@ -1,9 +1,7 @@
-use super::*;
 use mccp_core::*;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use crate::bm25::BM25Encoder;
 
 /// Return known embedding dimensions for well-known model names.
 /// Returns `None` for unknown models — callers should fall back to `probe_dimensions()`.
@@ -75,7 +73,7 @@ impl OpenAiProvider {
 
 #[async_trait::async_trait]
 impl LlmProvider for OpenAiProvider {
-    async fn complete(&self, prompt: &str, schema: Option<&JsonSchema>) -> Result<String> {
+    async fn complete(&self, prompt: &str, _schema: Option<&JsonSchema>) -> Result<String> {
         let request = OpenAiRequest {
             model: self.model.clone(),
             messages: vec![OpenAiMessage {
@@ -121,7 +119,7 @@ impl LlmProvider for OpenAiProvider {
             .ok_or_else(|| Error::ProviderError("No response content".to_string()))
     }
 
-    async fn stream(&self, prompt: &str) -> Result<tokio::sync::mpsc::Receiver<String>> {
+    async fn stream(&self, _prompt: &str) -> Result<tokio::sync::mpsc::Receiver<String>> {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         
         let request = OpenAiRequest {

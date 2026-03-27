@@ -124,23 +124,42 @@ impl CodeIntelSnapshot {
 
     /// Incrementally update: re-analyze only changed files, keep the rest
     pub fn incremental_update(&mut self, changed_files: &[String], new_partial: CodeIntelSnapshot) {
+        let changed_files: std::collections::HashSet<&str> = changed_files.iter()
+            .map(String::as_str)
+            .collect();
+
         // Build a lookup of which symbol ids belong to changed files
         let changed_symbol_ids: std::collections::HashSet<String> = self.symbols.iter()
-            .filter(|s| changed_files.contains(&s.file))
+            .filter(|s| changed_files.contains(s.file.as_str()))
             .map(|s| s.id.clone())
             .collect();
 
         // Remove old data for changed files
-        self.symbols.retain(|s| !changed_files.contains(&s.file));
-        self.call_edges.retain(|e| !changed_symbol_ids.contains(&e.caller));
-        self.import_edges.retain(|e| !changed_files.contains(&e.from_file));
-        self.use_edges.retain(|e| !changed_symbol_ids.contains(&e.user));
+        self.symbols.retain(|s| !changed_files.contains(s.file.as_str()));
+        self.call_edges.retain(|e| {
+            !changed_symbol_ids.contains(&e.caller) && !changed_symbol_ids.contains(&e.callee)
+        });
+        self.import_edges.retain(|e| {
+            !changed_files.contains(e.from_file.as_str()) && !changed_files.contains(e.to_file.as_str())
+        });
+        self.use_edges.retain(|e| {
+            !changed_symbol_ids.contains(&e.user) && !changed_symbol_ids.contains(&e.used)
+        });
+        self.frameworks.retain(|f| !changed_files.contains(f.file.as_str()));
+        self.codegen_patterns.retain(|p| !changed_files.contains(p.file.as_str()));
+        self.flows.retain(|flow| !changed_files.contains(flow.entry_file.as_str()));
 
         // Merge in new data
         self.symbols.extend(new_partial.symbols);
         self.call_edges.extend(new_partial.call_edges);
         self.use_edges.extend(new_partial.use_edges);
         self.import_edges.extend(new_partial.import_edges);
+        self.frameworks.extend(new_partial.frameworks);
+        self.codegen_patterns.extend(new_partial.codegen_patterns);
+        self.flows.extend(new_partial.flows);
+        if new_partial.structure.is_some() {
+            self.structure = new_partial.structure;
+        }
         self.built_at = chrono::Utc::now().timestamp();
     }
 }

@@ -1233,11 +1233,13 @@ async fn config_reset() -> anyhow::Result<()> {
 
 /// Return the command token (e.g. "/init") from a raw input string.
 /// Handles trailing descriptions from the autocomplete dropdown.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn parse_command(raw: &str) -> &str {
     raw.trim().split_whitespace().next().unwrap_or("")
 }
 
 /// Return true if the input string looks like it might be a /command.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn is_command_input(s: &str) -> bool {
     s.trim().starts_with('/')
 }

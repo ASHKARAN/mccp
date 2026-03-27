@@ -1,6 +1,5 @@
 use super::*;
 use std::path::PathBuf;
-use std::collections::HashMap;
 
 fn default_true() -> bool { true }
 

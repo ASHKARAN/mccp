@@ -3,7 +3,6 @@ use mccp_core::*;
 use std::sync::Arc;
 use dashmap::DashMap;
 use tokio::sync::RwLock;
-use std::time::{Duration, Instant};
 
 /// A record of a recent query (used for V3-8 cache warming)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -40,7 +39,7 @@ pub struct StorageBackend {
     graphs: Arc<DashMap<String, GraphStore>>,
     
     /// Cache for frequently accessed data
-    cache: Arc<RwLock<Cache>>,
+    _cache: Arc<RwLock<Cache>>,
     
     /// Persistence layer
     persistence: Arc<RwLock<Persistence>>,
@@ -55,7 +54,7 @@ impl StorageBackend {
             chunks: Arc::new(DashMap::new()),
             summaries: Arc::new(DashMap::new()),
             graphs: Arc::new(DashMap::new()),
-            cache: Arc::new(RwLock::new(Cache::new())),
+            _cache: Arc::new(RwLock::new(Cache::new())),
             persistence: Arc::new(RwLock::new(Persistence::new())),
         }
     }
@@ -322,13 +321,13 @@ impl StorageBackend {
 
     /// Backup storage to a file
     pub async fn backup(&self, path: &str) -> Result<()> {
-        let mut persistence = self.persistence.write().await;
+        let persistence = self.persistence.write().await;
         persistence.backup(self, path).await
     }
 
     /// Restore storage from a backup file
     pub async fn restore(&self, path: &str) -> Result<()> {
-        let mut persistence = self.persistence.write().await;
+        let persistence = self.persistence.write().await;
         persistence.restore(self, path).await
     }
 

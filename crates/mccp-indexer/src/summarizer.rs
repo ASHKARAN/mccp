@@ -1,4 +1,3 @@
-use super::*;
 use mccp_core::*;
 
 /// Summarizer for generating LLM summaries of code chunks
@@ -32,8 +31,8 @@ impl Summarizer {
     }
 
     /// Generate a summary using an LLM provider
-    async fn generate_summary_with_llm(&self, chunk: &Chunk, provider: &dyn LlmProvider) -> Result<String> {
-        let prompt = self.build_summary_prompt(chunk);
+    async fn generate_summary_with_llm(&self, chunk: &Chunk, _provider: &dyn LlmProvider) -> Result<String> {
+        let _prompt = self.build_summary_prompt(chunk);
         
         // TODO: Implement LLM provider interface
         // For now, return a placeholder

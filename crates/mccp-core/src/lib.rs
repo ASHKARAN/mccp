@@ -23,8 +23,6 @@ pub use project_manifest::*;
 pub use serde::{Serialize, Deserialize};
 
 use sha2::Digest as _Digest;
-use std::path::PathBuf;
-use uuid::Uuid;
 
 /// Unique identifier for a project, derived from canonical project root path
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -75,6 +75,7 @@ impl SnapshotDiff {
         self.added.iter().chain(self.modified.iter()).cloned().collect()
     }
 
+    #[allow(dead_code)]
     pub fn total_changed(&self) -> usize {
         self.added.len() + self.modified.len() + self.removed.len()
     }
@@ -84,6 +85,7 @@ impl SnapshotDiff {
 
 struct TextChunk {
     content: String,
+    #[allow(dead_code)]
     path: String,
     start_line: usize,
     end_line: usize,

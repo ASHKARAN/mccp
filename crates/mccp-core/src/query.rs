@@ -178,7 +178,7 @@ impl QueryCache {
 #[derive(Debug, Clone)]
 pub struct QueryEngine {
     cache: QueryCache,
-    ranker_config: RankerConfig,
+    _ranker_config: RankerConfig,
 }
 
 impl QueryEngine {
@@ -186,7 +186,7 @@ impl QueryEngine {
     pub fn new(ranker_config: RankerConfig) -> Self {
         Self {
             cache: QueryCache::new(1000),
-            ranker_config,
+            _ranker_config: ranker_config,
         }
     }
 
@@ -209,61 +209,61 @@ impl QueryEngine {
     }
 
     /// Get file content
-    pub async fn get_file(&self, project: &str, path: &str) -> Result<QueryResult> {
+    pub async fn get_file(&self, _project: &str, path: &str) -> Result<QueryResult> {
         // TODO: Implement file reading logic
         Err(Error::FileNotFound(path.to_string()))
     }
 
     /// Get summary for a file or class
-    pub async fn get_summary(&self, project: &str, path: &str, scope: Option<&str>) -> Result<QueryResult> {
+    pub async fn get_summary(&self, _project: &str, path: &str, _scope: Option<&str>) -> Result<QueryResult> {
         // TODO: Implement summary logic
         Err(Error::FileNotFound(path.to_string()))
     }
 
     /// Get related files via graph traversal
-    pub async fn get_related(&self, project: &str, path: &str, depth: usize) -> Result<Vec<QueryResult>> {
+    pub async fn get_related(&self, _project: &str, path: &str, _depth: usize) -> Result<Vec<QueryResult>> {
         // TODO: Implement related files logic
         Err(Error::FileNotFound(path.to_string()))
     }
 
     /// Get execution flow from an entry point
-    pub async fn get_flow(&self, project: &str, entry: &str, max_depth: usize) -> Result<Vec<QueryResult>> {
+    pub async fn get_flow(&self, _project: &str, entry: &str, _max_depth: usize) -> Result<Vec<QueryResult>> {
         // TODO: Implement flow tracing logic
         Err(Error::FileNotFound(entry.to_string()))
     }
 
     /// Search for an execution path across multiple files
-    pub async fn search_flow(&self, project: &str, from: &str, to: &str) -> Result<Vec<QueryResult>> {
+    pub async fn search_flow(&self, _project: &str, from: &str, _to: &str) -> Result<Vec<QueryResult>> {
         // TODO: Implement flow search logic
         Err(Error::FileNotFound(from.to_string()))
     }
 
     /// Find all usages of a symbol
-    pub async fn find_usages(&self, project: &str, symbol: &str, symbol_kind: Option<SymbolKind>, ref_kind: Option<Vec<RefKind>>, file_pattern: Option<&str>) -> Result<Vec<QueryResult>> {
+    pub async fn find_usages(&self, _project: &str, symbol: &str, _symbol_kind: Option<SymbolKind>, _ref_kind: Option<Vec<RefKind>>, _file_pattern: Option<&str>) -> Result<Vec<QueryResult>> {
         // TODO: Implement symbol usage search logic
         Err(Error::SymbolNotFound(symbol.to_string()))
     }
 
     /// Find the definition of a symbol
-    pub async fn find_definition(&self, project: &str, symbol: &str, scope_hint: Option<&str>) -> Result<QueryResult> {
+    pub async fn find_definition(&self, _project: &str, symbol: &str, _scope_hint: Option<&str>) -> Result<QueryResult> {
         // TODO: Implement symbol definition search logic
         Err(Error::SymbolNotFound(symbol.to_string()))
     }
 
     /// Get all symbols defined in a file
-    pub async fn get_symbol_map(&self, project: &str, path: &str) -> Result<Vec<Symbol>> {
+    pub async fn get_symbol_map(&self, _project: &str, path: &str) -> Result<Vec<Symbol>> {
         // TODO: Implement symbol map logic
         Err(Error::FileNotFound(path.to_string()))
     }
 
     /// Preview rename changes for a symbol
-    pub async fn rename_preview(&self, project: &str, symbol: &str, new_name: &str, symbol_kind: SymbolKind) -> Result<Vec<QueryResult>> {
+    pub async fn rename_preview(&self, _project: &str, symbol: &str, _new_name: &str, _symbol_kind: SymbolKind) -> Result<Vec<QueryResult>> {
         // TODO: Implement rename preview logic
         Err(Error::SymbolNotFound(symbol.to_string()))
     }
 
     /// Send feedback about result quality
-    pub async fn feedback(&self, project: &str, query_id: &str, signal: FeedbackSignal) -> Result<()> {
+    pub async fn feedback(&self, _project: &str, _query_id: &str, _signal: FeedbackSignal) -> Result<()> {
         // TODO: Implement feedback logic
         Ok(())
     }

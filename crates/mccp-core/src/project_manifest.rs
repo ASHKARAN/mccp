@@ -118,6 +118,7 @@ fn walk_for_languages(dir: &Path, counts: &mut HashMap<Language, usize>, depth: 
 /// Look at immediate subdirectories for marker files and create module definitions.
 pub fn detect_modules(root: &Path) -> Vec<ModuleDefinition> {
     let mut modules = Vec::new();
+    modules.extend(parse_git_submodules(root));
     let entries = match std::fs::read_dir(root) {
         Ok(e) => e,
         Err(_) => return modules,
@@ -151,6 +152,9 @@ pub fn detect_modules(root: &Path) -> Vec<ModuleDefinition> {
 
         for (marker, langs, purpose) in markers {
             if path.join(marker).exists() {
+                if modules.iter().any(|m| m.path.trim_end_matches('/') == name) {
+                    break;
+                }
                 modules.push(ModuleDefinition {
                     name: name.clone(),
                     path: format!("{}/", name),
@@ -164,6 +168,55 @@ pub fn detect_modules(root: &Path) -> Vec<ModuleDefinition> {
     }
 
     modules.sort_by(|a, b| a.name.cmp(&b.name));
+    modules
+}
+
+fn parse_git_submodules(root: &Path) -> Vec<ModuleDefinition> {
+    let gitmodules_path = root.join(".gitmodules");
+    let Ok(content) = std::fs::read_to_string(gitmodules_path) else {
+        return Vec::new();
+    };
+
+    let mut modules = Vec::new();
+    let mut current_name: Option<String> = None;
+    let mut current_path: Option<String> = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("[submodule ") {
+            if let (Some(name), Some(path)) = (current_name.take(), current_path.take()) {
+                let languages = detect_languages(root.join(&path).as_path());
+                modules.push(ModuleDefinition {
+                    name,
+                    path: if path.ends_with('/') { path } else { format!("{}/", path) },
+                    languages,
+                    purpose: Some("Git submodule".to_string()),
+                    description: None,
+                });
+            }
+
+            current_name = trimmed
+                .split('"')
+                .nth(1)
+                .map(|s| s.to_string())
+                .or_else(|| trimmed.strip_prefix("[submodule ").map(|s| s.trim_end_matches(']').trim_matches('"').to_string()));
+            current_path = None;
+        } else if let Some(value) = trimmed.strip_prefix("path =") {
+            current_path = Some(value.trim().to_string());
+        }
+    }
+
+    if let (Some(name), Some(path)) = (current_name, current_path) {
+        let languages = detect_languages(root.join(&path).as_path());
+        modules.push(ModuleDefinition {
+            name,
+            path: if path.ends_with('/') { path } else { format!("{}/", path) },
+            languages,
+            purpose: Some("Git submodule".to_string()),
+            description: None,
+        });
+    }
+
     modules
 }
 
@@ -223,6 +276,22 @@ mod tests {
         let names: Vec<&str> = modules.iter().map(|m| m.name.as_str()).collect();
         assert!(names.contains(&"server"));
         assert!(names.contains(&"client"));
+    }
+
+    #[test]
+    fn detect_modules_reads_gitmodules() {
+        let tmp = make_temp_dir();
+        let dir = tmp.path();
+        let vendor = dir.join("vendor/libfoo");
+        std::fs::create_dir_all(&vendor).unwrap();
+        std::fs::write(vendor.join("package.json"), "{}").unwrap();
+        std::fs::write(
+            dir.join(".gitmodules"),
+            "[submodule \"libfoo\"]\n\tpath = vendor/libfoo\n\turl = https://example.com/libfoo.git\n",
+        ).unwrap();
+
+        let modules = detect_modules(dir);
+        assert!(modules.iter().any(|m| m.name == "libfoo" && m.path == "vendor/libfoo/"));
     }
 
     #[test]

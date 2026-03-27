@@ -3,7 +3,7 @@ use mccp_core::*;
 use std::sync::Arc;
 use dashmap::DashMap;
 use tokio::sync::RwLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Info about a registered provider (V3-2)
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -317,12 +317,14 @@ mod tests {
 
 /// Mock provider for testing
 #[derive(Debug, Clone)]
+#[cfg(test)]
 struct MockProvider {
     id: String,
     name: String,
     version: String,
 }
 
+#[cfg(test)]
 impl MockProvider {
     fn new() -> Self {
         Self {

@@ -1,5 +1,4 @@
 use thiserror::Error;
-use std::path::PathBuf;
 
 /// Result type for mccp operations
 pub type Result<T> = std::result::Result<T, Error>;

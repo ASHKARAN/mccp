@@ -1,10 +1,8 @@
-use super::*;
 use mccp_core::*;
 use crate::chunker::Chunker;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, watch, Mutex};
-use tokio::time::{Duration, Instant};
 use ignore::WalkBuilder;
 
 /// Directories always skipped when `skip_default_dirs` is enabled.
@@ -38,10 +36,10 @@ pub const DEFAULT_SKIP_DIRS: &[&str] = &[
 pub struct IndexingPipeline {
     project: Project,
     config: IndexerConfig,
-    chunker: Chunker,
-    parser: Parser,
-    summarizer: Summarizer,
-    graph_builder: GraphBuilder,
+    _chunker: Chunker,
+    _parser: Parser,
+    _summarizer: Summarizer,
+    _graph_builder: GraphBuilder,
     file_watcher: Option<FileWatcher>,
     file_hash_cache: dashmap::DashMap<String, String>,
     processing_queue: tokio::sync::mpsc::UnboundedSender<IndexJob>,
@@ -117,10 +115,10 @@ impl IndexingPipeline {
         Self {
             project,
             config,
-            chunker,
-            parser,
-            summarizer,
-            graph_builder,
+            _chunker: chunker,
+            _parser: parser,
+            _summarizer: summarizer,
+            _graph_builder: graph_builder,
             file_watcher: None,
             file_hash_cache: dashmap::DashMap::new(),
             processing_queue: tx,
@@ -168,7 +166,7 @@ impl IndexingPipeline {
         }
         
         // Stop file watcher
-        if let Some(watcher) = &self.file_watcher {
+        if let Some(_watcher) = &self.file_watcher {
             // Note: FileWatcher doesn't have a stop method, it will be dropped
         }
         
@@ -235,7 +233,7 @@ impl IndexingPipeline {
                                 if let Ok(source_file) = SourceFile::from_path(&path) {
                                     let relative_path = source_file.relative_path(&PathBuf::from("/tmp")); // TODO: Use actual project root
                                     if let Some(relative_path) = relative_path {
-                                        let job = IndexJob {
+                                        let _job = IndexJob {
                                             project_id: "unknown".to_string(), // TODO: Get actual project ID
                                             file_path: relative_path,
                                             content: source_file.content,
@@ -249,10 +247,10 @@ impl IndexingPipeline {
                             }
                         }
                     }
-                    FileChangeEvent::Deleted(path) => {
+                    FileChangeEvent::Deleted(_path) => {
                         // TODO: Handle file deletion
                     }
-                    FileChangeEvent::Moved { from, to } => {
+                    FileChangeEvent::Moved { from: _, to: _ } => {
                         // TODO: Handle file moves
                     }
                 }
@@ -267,7 +265,7 @@ impl IndexingPipeline {
         job: IndexJob,
         chunker: &Chunker,
         parser: &Parser,
-        summarizer: &Summarizer,
+        _summarizer: &Summarizer,
         graph_builder: &GraphBuilder,
     ) -> Result<()> {
         // Parse the file
@@ -286,7 +284,7 @@ impl IndexingPipeline {
         let chunks = chunker.chunk_file(&source_file);
         
         // TODO: Generate summaries for chunks
-        for chunk in &chunks {
+        for _chunk in &chunks {
             // TODO: Send chunk to summarizer
         }
         
@@ -440,7 +438,7 @@ impl GraphBuilder {
     }
 
     /// Add symbols to the graph
-    pub fn add_symbols(&self, file_path: &str, symbols: Vec<Symbol>) {
+    pub fn add_symbols(&self, _file_path: &str, _symbols: Vec<Symbol>) {
         // TODO: Implement graph building
     }
 

@@ -1,4 +1,3 @@
-use super::*;
 use mccp_core::*;
 use axum::{
     Router,
@@ -14,7 +13,7 @@ use axum::{
     http::HeaderMap,
     middleware::Next,
     response::IntoResponse,
-    routing::{delete, get, patch, post, put},
+    routing::{get, patch, post},
 };
 use axum::http::StatusCode;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -360,7 +359,7 @@ impl ProjectRuntime {
         }
     }
 
-    pub fn to_persisted(&self) -> PersistedProject {
+    fn to_persisted(&self) -> PersistedProject {
         PersistedProject {
             id: self.id.clone(),
             name: self.name.clone(),
@@ -1532,7 +1531,7 @@ async fn cross_project_query(
 
 /// V3-4: Write file endpoint
 async fn write_file(
-    State(state): State<AppState>,
+    State(_state): State<AppState>,
     Json(req): Json<HttpWriteFileRequest>,
 ) -> impl IntoResponse {
     let project_root = std::path::PathBuf::from(".");

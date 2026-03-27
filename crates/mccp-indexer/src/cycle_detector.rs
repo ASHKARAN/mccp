@@ -1,4 +1,4 @@
-use mccp_core::{CodeIntelSnapshot, CallEdge, ImportEdge};
+use mccp_core::CodeIntelSnapshot;
 use serde::Serialize;
 use std::collections::HashMap;
 

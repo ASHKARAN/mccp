@@ -1,5 +1,3 @@
-use super::*;
-use mccp_core::*;
 use mccp_indexer::*;
 use serde::{Deserialize, Serialize};
 

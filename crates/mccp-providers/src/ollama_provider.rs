@@ -1,4 +1,3 @@
-use super::*;
 use mccp_core::*;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -296,11 +295,6 @@ struct OllamaOptions {
 struct OllamaResponse {
     response: String,
     done: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct OllamaPullRequest {
-    name: String,
 }
 
 #[cfg(test)]

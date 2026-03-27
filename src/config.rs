@@ -80,6 +80,7 @@ impl ProjectConfig {
         Ok(())
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn load(config_dir: &Path) -> anyhow::Result<Self> {
         let config_path = config_dir.join("project.toml");
         let content = fs::read_to_string(config_path)?;
